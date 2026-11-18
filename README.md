@@ -45,3 +45,4 @@ di atas API.
 Secret `SUPABASE_SECRET_KEY` hanya berada di Worker dan tidak boleh memakai
 prefix `VITE_`. Frontend hanya menerima URL Supabase dan publishable key.
 "# inventory_ria" 
+"# inventory_ria" 
