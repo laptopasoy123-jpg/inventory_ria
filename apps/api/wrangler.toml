@@ -1,0 +1,14 @@
+name = "inventaris-apd-api"
+main = "src/index.ts"
+compatibility_date = "2025-02-24"
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:8080"
+
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "inventaris-apd"
+preview_bucket_name = "inventaris-apd-local"
+
+[observability]
+enabled = true
