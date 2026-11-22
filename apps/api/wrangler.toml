@@ -1,4 +1,4 @@
-name = "inventaris-apd-api"
+name = "inventory-ria"
 main = "src/index.ts"
 compatibility_date = "2025-02-24"
 
