@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2025-02-24"
 
 [vars]
-ALLOWED_ORIGIN = "http://localhost:8081"
+ALLOWED_ORIGIN = "*"
 
 [[r2_buckets]]
 binding = "ATTACHMENTS"

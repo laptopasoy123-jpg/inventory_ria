@@ -1,4 +1,8 @@
-const baseUrl = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'http://localhost:8190')
+const DEFAULT_PROD_API_URL = 'https://inventory-ria.laptopasoy123.workers.dev'
+const baseUrl = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? '' : DEFAULT_PROD_API_URL)
+).replace(/\/+$/, '')
 
 /** Generates an RFC 4122 v4 UUID safely even outside HTTPS/localhost secure contexts. */
 export function generateUuid(): string {

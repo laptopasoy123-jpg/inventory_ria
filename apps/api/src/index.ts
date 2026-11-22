@@ -15,17 +15,26 @@ const app = new Hono<AppEnv>()
 
 app.use('*', async (c, next) => cors({
   origin: (origin) => {
-    const allowed = c.env.ALLOWED_ORIGIN || 'http://localhost:8081'
-    if (!origin) return allowed
-    if (origin === allowed) return origin
+    const raw = (c.env.ALLOWED_ORIGIN || '*').trim()
+    if (!origin) return raw === '*' ? '*' : (raw.split(',')[0]?.trim() || '*')
+    if (raw === '*') return origin
+    const allowedList = raw.split(',').map((s) => s.trim()).filter(Boolean)
+    if (allowedList.includes(origin)) return origin
+    if (/^https:\/\/[a-z0-9-]+\.(pages|workers)\.dev$/i.test(origin)) return origin
     if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin
-    return allowed
+    return allowedList[0] || origin
   },
   allowHeaders: ['Authorization', 'Content-Type', 'X-Idempotency-Key'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true,
 })(c, next))
 
+app.get('/', (c) => c.json({
+  status: 'ok',
+  service: 'inventory-ria-api',
+  mode: isSupabaseConfigured(c.env) ? 'supabase' : 'local',
+  health: '/health',
+}))
 app.get('/health', (c) => c.json({
   status: 'ok',
   service: 'inventaris-apd-api',

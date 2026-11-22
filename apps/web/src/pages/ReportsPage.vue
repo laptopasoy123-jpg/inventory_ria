@@ -1,23 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { CalendarRange, CheckSquare, Download, FileDown, Printer } from '@lucide/vue'
-import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, variantLabel } from '@/lib/api'
+import { AlertTriangle, CalendarRange, CheckSquare, Download, FileDown, Printer, RefreshCw } from '@lucide/vue'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
 import type { PdfSectionTable } from '@/lib/pdf-report'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
-type ReportTab = 'stock' | 'movements' | 'procurements' | 'opname' | 'liabilities' | 'payments'
+type ReportSectionKey = 'stock' | 'movements' | 'procurements' | 'opname' | 'liabilities' | 'payments'
+type ReportTab = 'all' | ReportSectionKey
 
 const master = useMasterStore()
 const toast = useToast()
 
-const activeTab = ref<ReportTab>('movements')
+const activeTab = ref<ReportTab>('all')
 const loading = ref(true)
+const loadError = ref('')
 
 const dateFrom = ref('')
 const dateTo = ref('')
+const activePreset = ref<'all' | 'month' | '30d' | 'custom'>('all')
 
-const selectedSections = reactive<Record<ReportTab, boolean>>({
+const selectedSections = reactive<Record<ReportSectionKey, boolean>>({
   stock: true,
   movements: true,
   procurements: true,
@@ -26,7 +29,7 @@ const selectedSections = reactive<Record<ReportTab, boolean>>({
   payments: true,
 })
 
-const sectionList: Array<{ key: ReportTab; label: string }> = [
+const sectionList: Array<{ key: ReportSectionKey; label: string }> = [
   { key: 'stock', label: 'Saldo Stok Saat Ini' },
   { key: 'movements', label: 'Mutasi / Arus APD' },
   { key: 'procurements', label: 'Pengadaan & Progress' },
@@ -34,6 +37,17 @@ const sectionList: Array<{ key: ReportTab; label: string }> = [
   { key: 'liabilities', label: 'Tanggungan Karyawan' },
   { key: 'payments', label: 'Pembayaran' },
 ]
+
+const allSectionsSelected = computed(() =>
+  sectionList.every((s) => selectedSections[s.key]),
+)
+
+function toggleSelectAllSections() {
+  const next = !allSectionsSelected.value
+  for (const s of sectionList) {
+    selectedSections[s.key] = next
+  }
+}
 
 const movements = ref<Array<{ id: number; occurred_at: string; movement_type: string; condition: string; quantity_delta: number; balance_after: number; notes: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }>>([])
 const procurements = ref<Array<{ procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
@@ -80,6 +94,7 @@ const printStats = computed(() => {
 })
 
 function setPreset(preset: 'month' | '30d' | 'all') {
+  activePreset.value = preset
   const today = new Date()
   if (preset === 'all') {
     dateFrom.value = ''
@@ -95,8 +110,10 @@ function setPreset(preset: 'month' | '30d' | 'all') {
   }
 }
 
-async function loadAll() {
+async function loadAll(force = false) {
+  if (force) invalidateApiCache()
   loading.value = true
+  loadError.value = ''
   try {
     const [m, pr, st, lb, py] = await Promise.all([
       api<{ data: typeof movements.value }>('/api/inventory/movements?limit=300'),
@@ -104,13 +121,15 @@ async function loadAll() {
       api<{ data: typeof stocktakes.value }>('/api/transactions/stocktakes'),
       api<{ data: typeof liabilities.value }>('/api/transactions/liabilities'),
       api<{ data: typeof payments.value }>('/api/procurements/payments/all'),
-      master.refresh(true),
+      master.refresh(force),
     ])
     movements.value = m.data
     procurements.value = pr.data
     stocktakes.value = st.data
     liabilities.value = lb.data
     payments.value = py.data
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : 'Gagal memuat data laporan'
   } finally {
     loading.value = false
   }
@@ -124,7 +143,7 @@ function movementName(t: string) {
   return map[t] || t
 }
 
-function buildCheckedPdfSections(): PdfSectionTable[] {
+const checkedSections = computed<PdfSectionTable[]>(() => {
   const sections: PdfSectionTable[] = []
 
   if (selectedSections.stock) {
@@ -236,10 +255,10 @@ function buildCheckedPdfSections(): PdfSectionTable[] {
   }
 
   return sections
-}
+})
 
 async function downloadPdfReport() {
-  const sections = buildCheckedPdfSections()
+  const sections = checkedSections.value
   if (!sections.length) {
     toast.error('Ceklis minimal 1 sesi laporan terlebih dahulu')
     return
@@ -271,6 +290,22 @@ function printReport() {
 
 function exportActiveCsv() {
   const d = new Date().toISOString().slice(0, 10)
+  if (activeTab.value === 'all') {
+    const sections = checkedSections.value
+    if (!sections.length) {
+      toast.error('Ceklis minimal 1 sesi laporan terlebih dahulu')
+      return
+    }
+    const combinedRows: Array<Array<string | number>> = []
+    for (const sec of sections) {
+      combinedRows.push([sec.title, sec.subtitle || ''])
+      combinedRows.push(sec.headers)
+      for (const r of sec.rows) combinedRows.push(r)
+      combinedRows.push([])
+    }
+    downloadCsv(`laporan-lengkap-apd-${d}.csv`, ['LAPORAN TERPADU INVENTARIS APD', periodLabel.value], combinedRows)
+    return
+  }
   if (activeTab.value === 'stock') {
     downloadCsv(`laporan-stok-${d}.csv`, ['Kode', 'Nama', 'Ukuran', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Tersedia'],
       master.variants.map(v => [v.code, v.name, v.size, v.stock_new, v.stock_used_good, v.stock_quarantine, v.stock_damaged, v.total_available]))
@@ -295,7 +330,7 @@ function exportActiveCsv() {
   }
 }
 
-onMounted(loadAll)
+onMounted(() => void loadAll())
 </script>
 
 <template>
@@ -327,22 +362,33 @@ onMounted(loadAll)
 
     <section class="page-intro screen-only-intro">
       <div>
-        <p class="eyebrow">Analitik, Cetak & Ekspor</p>
+        <p class="eyebrow">Analitik, Cetak &amp; Ekspor</p>
         <h2>Laporan Inventaris</h2>
-        <p>Ceklis sesi laporan yang ingin dicetak atau diunduh ke PDF, serta pilih rentang tanggalnya.</p>
+        <p>Tampilkan semua sesi sekaligus atau pilih sesi tertentu untuk ditinjau, dicetak, dan diunduh ke PDF/CSV.</p>
       </div>
       <div class="intro-actions">
-        <button class="secondary-button" @click="exportActiveCsv"><Download :size="16" /> Ekspor CSV Tab</button>
+        <button class="secondary-button square" aria-label="Muat ulang" @click="loadAll(true)"><RefreshCw :size="16" :class="{ spinning: loading }" /></button>
+        <button class="secondary-button" @click="exportActiveCsv"><Download :size="16" /> {{ activeTab === 'all' ? 'Ekspor CSV Semua' : 'Ekspor CSV Tab' }}</button>
         <button class="secondary-button" @click="printReport"><Printer :size="16" /> Cetak</button>
         <button class="primary-button" @click="downloadPdfReport"><FileDown :size="16" /> Download PDF</button>
       </div>
     </section>
 
+    <div v-if="loadError" class="inline-alert screen-only-intro">
+      <AlertTriangle :size="18" /> {{ loadError }}
+      <button @click="loadAll(true)">Coba lagi</button>
+    </div>
+
     <!-- Checklist & Date Range Builder -->
     <section class="panel report-builder-panel screen-only-intro">
       <div class="builder-row">
         <div class="builder-block">
-          <div class="builder-title"><CheckSquare :size="15" /> <strong>Pilih Sesi untuk Cetak / Download PDF</strong></div>
+          <div class="builder-title" style="justify-content:space-between;width:100%;">
+            <span style="display:inline-flex;align-items:center;gap:6px;"><CheckSquare :size="15" /> <strong>Pilih Sesi Laporan (Tampilan Semua / Cetak / PDF)</strong></span>
+            <button type="button" class="secondary-button xs" @click="toggleSelectAllSections">
+              {{ allSectionsSelected ? 'Hapus Semua' : 'Pilih Semua' }}
+            </button>
+          </div>
           <div class="checklist-pills">
             <label v-for="sec in sectionList" :key="sec.key" class="check-pill" :class="{ checked: selectedSections[sec.key] }">
               <input v-model="selectedSections[sec.key]" type="checkbox" />
@@ -354,12 +400,12 @@ onMounted(loadAll)
         <div class="builder-block">
           <div class="builder-title"><CalendarRange :size="15" /> <strong>Rentang Tanggal (Arus APD, Pengadaan, Opname, Pembayaran)</strong></div>
           <div class="date-range-controls">
-            <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" />
+            <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" @input="activePreset = 'custom'" />
             <span>s/d</span>
-            <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" />
-            <button type="button" class="secondary-button xs" @click="setPreset('month')">Bulan Ini</button>
-            <button type="button" class="secondary-button xs" @click="setPreset('30d')">30 Hari</button>
-            <button type="button" class="secondary-button xs" @click="setPreset('all')">Semua</button>
+            <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" @input="activePreset = 'custom'" />
+            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'all' }" @click="setPreset('all')">Semua</button>
+            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'month' }" @click="setPreset('month')">Bulan Ini</button>
+            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === '30d' }" @click="setPreset('30d')">30 Hari</button>
           </div>
         </div>
       </div>
@@ -368,6 +414,7 @@ onMounted(loadAll)
     <!-- Screen Tab View -->
     <section class="panel data-panel report-screen-panel">
       <div class="record-tabs">
+        <button :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">Semua Laporan ({{ checkedSections.length }} Sesi)</button>
         <button :class="{ active: activeTab === 'movements' }" @click="activeTab = 'movements'">Mutasi / Arus APD ({{ filteredMovements.length }})</button>
         <button :class="{ active: activeTab === 'procurements' }" @click="activeTab = 'procurements'">Pengadaan ({{ filteredProcurements.length }})</button>
         <button :class="{ active: activeTab === 'opname' }" @click="activeTab = 'opname'">Stok Opname (+/-)</button>
@@ -377,6 +424,39 @@ onMounted(loadAll)
       </div>
 
       <div v-if="loading" class="loading-row">Memuat data laporan...</div>
+
+      <div v-else-if="activeTab === 'all'" style="display:grid;gap:22px;">
+        <div v-if="!checkedSections.length" class="empty-state compact">
+          <strong>Belum ada sesi yang diceklis.</strong>
+          <span>Klik "Pilih Semua" atau ceklis minimal satu sesi di atas.</span>
+        </div>
+        <div v-for="sec in checkedSections" :key="sec.title" style="display:grid;gap:8px;">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:6px 2px;border-bottom:1px solid var(--border);">
+            <strong style="font-size:15px;color:var(--text);">{{ sec.title }}</strong>
+            <small class="muted-text">{{ sec.subtitle }}</small>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th v-for="h in sec.headers" :key="h">{{ h }}</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, rIdx) in sec.rows.slice(0, 50)" :key="rIdx">
+                  <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
+                </tr>
+                <tr v-if="sec.rows.length > 50">
+                  <td :colspan="sec.headers.length" class="muted-text" style="text-align:center;">
+                    Menampilkan 50 dari {{ sec.rows.length }} baris. Gunakan Download PDF / Ekspor CSV untuk seluruh baris.
+                  </td>
+                </tr>
+                <tr v-if="!sec.rows.length">
+                  <td :colspan="sec.headers.length"><div class="empty-state compact">Tidak ada data pada periode ini.</div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
       <div v-else-if="activeTab === 'stock'" class="table-wrap">
         <table>
@@ -491,7 +571,7 @@ onMounted(loadAll)
 
     <!-- Print-Only Multi-Section View (renders ONLY checked sections cleanly when printing!) -->
     <div class="print-multi-sections">
-      <div v-for="sec in buildCheckedPdfSections()" :key="sec.title" class="print-section-block">
+      <div v-for="sec in checkedSections" :key="sec.title" class="print-section-block">
         <div class="print-sec-head">
           <h3>{{ sec.title }}</h3>
           <small v-if="sec.subtitle">{{ sec.subtitle }}</small>
