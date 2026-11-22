@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { itemSchema, paginationSchema } from '@inventaris/contracts'
+import { conditionTransferSchema, itemSchema, openingStockSchema, paginationSchema } from '@inventaris/contracts'
 import { zValidator } from '@hono/zod-validator'
 import type { AppEnv } from '../types'
 
@@ -7,38 +7,45 @@ export const inventoryRoutes = new Hono<AppEnv>()
 
 inventoryRoutes.get('/', zValidator('query', paginationSchema), async (c) => {
   const { page, limit, search } = c.req.valid('query')
-  let query = c.get('db').from('inventory_view').select('*', { count: 'exact' })
-  if (search) query = query.or(`code.ilike.%${search}%,name.ilike.%${search}%,category_name.ilike.%${search}%`)
-  const { data, count, error } = await query
-    .order('name')
-    .range((page - 1) * limit, page * limit - 1)
-  if (error) throw error
-  return c.json({ data, pagination: { page, limit, total: count ?? 0, totalPages: Math.ceil((count ?? 0) / limit) } })
+  const status = c.req.query('status')
+  const categoryId = c.req.query('categoryId')
+  const result = await c.get('service').listInventory({ page, limit, search, status, categoryId })
+  return c.json(result)
 })
 
 inventoryRoutes.post('/items', zValidator('json', itemSchema), async (c) => {
-  const input = c.req.valid('json')
-  const { data, error } = await c.get('db').from('items').insert({
-    code: input.code,
-    name: input.name,
-    category_id: input.categoryId,
-    specification: input.specification,
-    unit: input.unit,
-    minimum_stock: input.minimumStock,
-    photo_key: input.photoKey,
-    return_required: input.returnRequired,
-    active: input.active,
-  }).select().single()
-  if (error) throw error
+  const data = await c.get('service').saveItem(null, c.req.valid('json'))
   return c.json({ data, message: 'Barang berhasil ditambahkan' }, 201)
 })
 
-inventoryRoutes.get('/movements/:variantId', async (c) => {
-  const { data, error } = await c.get('db').from('stock_movements')
-    .select('*, profiles(full_name)')
-    .eq('variant_id', c.req.param('variantId'))
-    .order('occurred_at', { ascending: false })
-    .limit(100)
-  if (error) throw error
+inventoryRoutes.get('/movements', async (c) => {
+  const limit = Number(c.req.query('limit') || 150)
+  const data = await c.get('service').listMovements({ limit })
   return c.json({ data })
+})
+
+inventoryRoutes.get('/movements/:variantId', async (c) => {
+  const data = await c.get('service').listMovements({ variantId: c.req.param('variantId'), limit: 100 })
+  return c.json({ data })
+})
+
+inventoryRoutes.get('/opening-stocks', async (c) => {
+  const data = await c.get('service').listOpeningStocks()
+  return c.json({ data })
+})
+
+inventoryRoutes.post('/opening-stock', zValidator('json', openingStockSchema), async (c) => {
+  const key = c.req.header('X-Idempotency-Key') || crypto.randomUUID()
+  const data = await c.get('service').createOpeningStock(c.req.valid('json'), key)
+  return c.json({ data, message: 'Stok awal berhasil dicatat ke inventaris' }, 201)
+})
+
+inventoryRoutes.put('/opening-stock/:id', zValidator('json', openingStockSchema), async (c) => {
+  const data = await c.get('service').updateOpeningStock(c.req.param('id'), c.req.valid('json'))
+  return c.json({ data, message: 'Stok awal berhasil diperbarui' })
+})
+
+inventoryRoutes.post('/condition-transfer', zValidator('json', conditionTransferSchema), async (c) => {
+  const data = await c.get('service').transferCondition(c.req.valid('json'))
+  return c.json({ data, message: 'Kondisi stok berhasil diperbarui' }, 201)
 })

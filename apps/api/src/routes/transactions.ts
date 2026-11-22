@@ -1,50 +1,105 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
-import type { SupabaseClient } from '@supabase/supabase-js'
-import { issuanceSchema, purchaseSchema, reimbursementSchema, returnSchema, stocktakeFinalizeSchema } from '@inventaris/contracts'
+import {
+  issuanceSchema,
+  purchaseSchema,
+  reimbursementSchema,
+  returnSchema,
+  stocktakeCreateSchema,
+  stocktakeFinalizeSchema,
+} from '@inventaris/contracts'
 import type { AppEnv } from '../types'
 
 export const transactionRoutes = new Hono<AppEnv>()
 
-async function resolveActorId(db: SupabaseClient): Promise<string | null> {
-  const { data } = await db.from('profiles').select('id').eq('active', true).order('created_at').limit(1).maybeSingle()
-  return data?.id ?? null
-}
+transactionRoutes.get('/purchases', async (c) => {
+  const data = await c.get('service').listPurchases({
+    fundingSource: c.req.query('fundingSource'),
+    search: c.req.query('search'),
+  })
+  return c.json({ data })
+})
 
 transactionRoutes.post('/purchases', zValidator('json', purchaseSchema), async (c) => {
-  const db = c.get('db')
-  const payload = { ...c.req.valid('json'), idempotencyKey: c.req.header('X-Idempotency-Key') || crypto.randomUUID() }
-  const { data, error } = await db.rpc('create_purchase_receipt', { p_payload: payload, p_actor: await resolveActorId(db) })
-  if (error) throw error
-  return c.json({ data, message: 'Pembelian dan penerimaan berhasil disimpan' }, 201)
+  const key = c.req.header('X-Idempotency-Key') || crypto.randomUUID()
+  const data = await c.get('service').createPurchaseReceipt(c.req.valid('json'), key)
+  return c.json({ data, message: 'Barang masuk berhasil disimpan dan menambah stok' }, 201)
+})
+
+transactionRoutes.put('/purchases/:id', zValidator('json', purchaseSchema), async (c) => {
+  const data = await c.get('service').updatePurchaseReceipt(c.req.param('id'), c.req.valid('json'))
+  return c.json({ data, message: 'Barang masuk berhasil diperbarui & stok disesuaikan' })
+})
+
+transactionRoutes.get('/issuances', async (c) => {
+  const data = await c.get('service').listIssuances({
+    search: c.req.query('search'),
+    employeeId: c.req.query('employeeId'),
+  })
+  return c.json({ data })
+})
+
+transactionRoutes.get('/issuances/open-by-employee/:employeeId', async (c) => {
+  const data = await c.get('service').listOpenIssuanceItemsByEmployee(c.req.param('employeeId'))
+  return c.json({ data })
 })
 
 transactionRoutes.post('/issuances', zValidator('json', issuanceSchema), async (c) => {
-  const db = c.get('db')
-  const payload = { ...c.req.valid('json'), idempotencyKey: c.req.header('X-Idempotency-Key') || crypto.randomUUID() }
-  const { data, error } = await db.rpc('create_issuance', { p_payload: payload, p_actor: await resolveActorId(db) })
-  if (error) throw error
-  return c.json({ data, message: 'Barang keluar berhasil dicatat' }, 201)
+  const key = c.req.header('X-Idempotency-Key') || crypto.randomUUID()
+  const data = await c.get('service').createIssuance(c.req.valid('json'), key)
+  return c.json({ data, message: 'Barang keluar berhasil dicatat & mengurangi stok tersedia' }, 201)
+})
+
+transactionRoutes.put('/issuances/:id', zValidator('json', issuanceSchema), async (c) => {
+  const data = await c.get('service').updateIssuance(c.req.param('id'), c.req.valid('json'))
+  return c.json({ data, message: 'Barang keluar berhasil diperbarui & stok disesuaikan' })
+})
+
+transactionRoutes.get('/returns', async (c) => {
+  const data = await c.get('service').listReturns({
+    result: c.req.query('result'),
+    search: c.req.query('search'),
+  })
+  return c.json({ data })
 })
 
 transactionRoutes.post('/returns', zValidator('json', returnSchema), async (c) => {
-  const db = c.get('db')
-  const payload = { ...c.req.valid('json'), idempotencyKey: c.req.header('X-Idempotency-Key') || crypto.randomUUID() }
-  const { data, error } = await db.rpc('create_return', { p_payload: payload, p_actor: await resolveActorId(db) })
-  if (error) throw error
-  return c.json({ data, message: 'Pengembalian berhasil diperiksa' }, 201)
+  const key = c.req.header('X-Idempotency-Key') || crypto.randomUUID()
+  const data = await c.get('service').createReturn(c.req.valid('json'), key)
+  return c.json({ data, message: 'Pengembalian APD berhasil diproses' }, 201)
 })
 
-transactionRoutes.post('/reimbursements', zValidator('json', reimbursementSchema), async (c) => {
-  const db = c.get('db')
-  const { data, error } = await db.rpc('create_reimbursement', { p_payload: c.req.valid('json'), p_actor: await resolveActorId(db) })
-  if (error) throw error
-  return c.json({ data, message: 'Penggantian dana berhasil dicatat' }, 201)
+transactionRoutes.put('/returns/:id', zValidator('json', returnSchema), async (c) => {
+  const data = await c.get('service').updateReturn(c.req.param('id'), c.req.valid('json'))
+  return c.json({ data, message: 'Pengembalian APD berhasil diperbarui' })
+})
+
+transactionRoutes.get('/liabilities', async (c) => {
+  const data = await c.get('service').getEmployeeLiabilities()
+  return c.json({ data })
+})
+
+transactionRoutes.get('/stocktakes', async (c) => {
+  const data = await c.get('service').listStocktakes({ status: c.req.query('status') })
+  return c.json({ data })
+})
+
+transactionRoutes.post('/stocktakes', zValidator('json', stocktakeCreateSchema), async (c) => {
+  const data = await c.get('service').createStocktake(c.req.valid('json'))
+  return c.json({ data, message: 'Stok opname berhasil disimpan' }, 201)
+})
+
+transactionRoutes.put('/stocktakes/:id', zValidator('json', stocktakeCreateSchema), async (c) => {
+  const data = await c.get('service').updateStocktake(c.req.param('id'), c.req.valid('json'))
+  return c.json({ data, message: 'Stok opname berhasil diperbarui' })
 })
 
 transactionRoutes.post('/stocktakes/finalize', zValidator('json', stocktakeFinalizeSchema), async (c) => {
-  const db = c.get('db')
-  const { data, error } = await db.rpc('finalize_stocktake', { p_stocktake_id: c.req.valid('json').stocktakeId, p_actor: await resolveActorId(db) })
-  if (error) throw error
-  return c.json({ data, message: 'Stok opname berhasil difinalisasi' })
+  const data = await c.get('service').finalizeStocktake(c.req.valid('json').stocktakeId)
+  return c.json({ data, message: 'Stok opname berhasil difinalisasi & saldo disesuaikan' })
+})
+
+transactionRoutes.post('/reimbursements', zValidator('json', reimbursementSchema), async (c) => {
+  const data = await c.get('service').createReimbursement(c.req.valid('json'))
+  return c.json({ data, message: 'Penggantian dana berhasil dicatat' }, 201)
 })

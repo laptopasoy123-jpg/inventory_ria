@@ -56,18 +56,10 @@ create table public.funders (
   created_at timestamptz not null default now()
 );
 
-create table public.categories (
-  id uuid primary key default gen_random_uuid(),
-  code text not null unique,
-  name text not null unique,
-  created_at timestamptz not null default now()
-);
-
 create table public.items (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
   name text not null,
-  category_id uuid not null references public.categories(id),
   specification text,
   unit text not null,
   minimum_stock numeric(14,2) not null default 0 check (minimum_stock >= 0),
@@ -278,7 +270,6 @@ select
   i.id as item_id,
   i.code,
   i.name,
-  c.name as category_name,
   i.specification,
   v.size,
   i.unit,
@@ -297,17 +288,15 @@ select
   end as stock_status
 from public.item_variants v
 join public.items i on i.id = v.item_id
-join public.categories c on c.id = i.category_id
 left join public.stock_balances b on b.variant_id = v.id
 where i.active = true and v.active = true
-group by v.id, i.id, c.name;
+group by v.id, i.id;
 
 alter table public.profiles enable row level security;
 alter table public.departments enable row level security;
 alter table public.employees enable row level security;
 alter table public.suppliers enable row level security;
 alter table public.funders enable row level security;
-alter table public.categories enable row level security;
 alter table public.items enable row level security;
 alter table public.item_variants enable row level security;
 alter table public.stock_balances enable row level security;
@@ -329,7 +318,7 @@ do $$
 declare table_name text;
 begin
   foreach table_name in array array[
-    'departments','employees','suppliers','funders','categories','items','item_variants',
+    'departments','employees','suppliers','funders','items','item_variants',
     'stock_balances','purchases','purchase_items','issuances','issuance_items','returns',
     'return_items','reimbursements','stocktakes','stocktake_items','stock_movements'
   ] loop
@@ -341,7 +330,6 @@ create policy departments_admin_write on public.departments for all to authentic
 create policy employees_admin_write on public.employees for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
 create policy suppliers_admin_write on public.suppliers for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
 create policy funders_admin_write on public.funders for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
-create policy categories_admin_write on public.categories for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
 create policy items_admin_write on public.items for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
 create policy item_variants_admin_write on public.item_variants for all to authenticated using (public.current_user_role() = 'admin') with check (public.current_user_role() = 'admin');
 
