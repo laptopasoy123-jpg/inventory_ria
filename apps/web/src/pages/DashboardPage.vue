@@ -34,6 +34,7 @@ const data = ref<Dashboard>({
   itemTypes: 0, stockByUnit: [], lowStockTypes: 0, outStockTypes: 0, purchaseCount: 0,
   periodFlow: [], monthlyFlow: [], attentionItems: [], activeProcurements: [], activeProcurementCount: 0, pendingPaymentAmount: 0,
 })
+const totalRecordedNominal = ref(0)
 
 // Drill-down History Modal state
 const historyOpen = ref(false)
@@ -269,36 +270,31 @@ async function openDashboardHistory(
       const res = await api<{
         data: Array<{
           procurement_no: string; po_number: string | null; procurement_date: string; status: string;
-          payment_status: string; total_amount: number; paid_amount: number; remaining_amount?: number; supplier_name?: string;
+          funding_source?: string; payment_method?: string; total_amount: number; supplier_name?: string; reason?: string;
           suppliers?: { name: string } | null
         }>
       }>('/api/procurements')
-      const unpaid = res.data.filter((p) => p.status !== 'cancelled' && p.payment_status !== 'paid')
+      const recorded = res.data.filter((p) => p.status !== 'cancelled' && Number(p.total_amount || 0) > 0)
 
-      historyTitle.value = 'Riwayat Pengadaan Belum Lunas'
-      historySubtitle.value = 'Daftar pengadaan (PO) yang masih memiliki sisa pembayaran'
-      historyEmpty.value = 'Semua pengadaan sudah lunas.'
-      historyActionLabel.value = 'Buka Pembayaran'
+      historyTitle.value = 'History Pembayaran (Nominal Pengadaan Tercatat)'
+      historySubtitle.value = `${recorded.length} dokumen pengadaan dengan total nominal ${formatCurrency(recorded.reduce((s, p) => s + Number(p.total_amount || 0), 0))}`
+      historyEmpty.value = 'Belum ada nominal pengadaan yang tercatat.'
+      historyActionLabel.value = 'Buka History Pembayaran'
       historyActionTarget.value = { name: 'payments' }
       historyColumns.value = [
         { key: 'doc', label: 'Kode Pengadaan / PO' },
-        { key: 'supplier', label: 'Supplier' },
-        { key: 'total', label: 'Total Nilai' },
-        { key: 'paid', label: 'Sudah Dibayar' },
-        { key: 'remaining', label: 'Sisa Tagihan' },
-        { key: 'status', label: 'Status Bayar' },
+        { key: 'supplier', label: 'Supplier / Toko' },
+        { key: 'method', label: 'Sumber & Metode' },
+        { key: 'total', label: 'Nominal' },
+        { key: 'note', label: 'Keterangan' },
       ]
-      historyRows.value = unpaid.map((p) => {
-        const rem = Math.max(0, Number(p.remaining_amount ?? (Number(p.total_amount || 0) - Number(p.paid_amount || 0))))
-        return {
-          doc: { text: p.procurement_no, sub: `${formatDate(p.procurement_date)}${p.po_number ? ` · PO: ${p.po_number}` : ''}`, strong: true },
-          supplier: p.suppliers?.name || p.supplier_name || '-',
-          total: formatCurrency(p.total_amount),
-          paid: formatCurrency(p.paid_amount),
-          remaining: { text: formatCurrency(rem), strong: true },
-          status: { text: p.payment_status === 'partial' ? 'DP / Sebagian' : 'Belum Dibayar', pill: p.payment_status === 'partial' ? 'amber' : 'out' },
-        }
-      })
+      historyRows.value = recorded.map((p) => ({
+        doc: { text: p.procurement_no, sub: `${formatDate(p.procurement_date)}${p.po_number ? ` · PO: ${p.po_number}` : ''}`, strong: true },
+        supplier: p.suppliers?.name || p.supplier_name || '-',
+        method: { text: p.funding_source === 'advanced' ? 'Talangan' : 'Kas Perusahaan', sub: p.payment_method === 'cash' ? 'Tunai / Kas' : 'Transfer Bank' },
+        total: { text: formatCurrency(p.total_amount), strong: true },
+        note: p.reason || '-',
+      }))
     } else if (kind === 'proc_detail' && payload && 'procurement_no' in payload) {
       const res = await api<{
         data: {
@@ -380,8 +376,14 @@ async function load(force = false) {
   try {
     const m = now.getMonth() + 1
     const y = now.getFullYear()
-    const response = await api<{ data: Dashboard }>(`/api/dashboard?period=${period.value}&month=${m}&year=${y}`)
+    const [response, procRes] = await Promise.all([
+      api<{ data: Dashboard }>(`/api/dashboard?period=${period.value}&month=${m}&year=${y}`),
+      api<{ data: Array<{ status: string; total_amount: number }> }>('/api/procurements').catch(() => ({ data: [] })),
+    ])
     data.value = response.data
+    totalRecordedNominal.value = procRes.data
+      .filter((p) => p.status !== 'cancelled')
+      .reduce((s, p) => s + Number(p.total_amount || 0), 0)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Dashboard tidak dapat dimuat'
   } finally {
@@ -534,8 +536,8 @@ watch(period, () => void load())
         <button type="button" class="purchase-strip clickable-strip" @click="openDashboardHistory('unpaid')">
           <span><Wallet :size="18" /></span>
           <div>
-            <small>Total transaksi pembayaran belum lunas (klik rincian)</small>
-            <strong>{{ formatCurrency(data.pendingPaymentAmount || 0) }}</strong>
+            <small>History Pembayaran · Total nominal pengadaan tercatat</small>
+            <strong>{{ formatCurrency(totalRecordedNominal) }}</strong>
           </div>
         </button>
       </article>

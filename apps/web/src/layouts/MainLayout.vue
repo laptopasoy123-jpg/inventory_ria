@@ -70,7 +70,7 @@ const navGroups = [
   {
     section: 'Keuangan & Laporan',
     items: [
-      { name: 'payments', label: 'Pembayaran', icon: ReceiptText },
+      { name: 'payments', label: 'History Pembayaran', icon: ReceiptText },
       { name: 'reports', label: 'Laporan', icon: FileBarChart },
     ],
   },

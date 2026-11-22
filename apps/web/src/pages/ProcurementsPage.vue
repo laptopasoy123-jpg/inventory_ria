@@ -1,19 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowUpDown, CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, Wallet, XCircle } from '@lucide/vue'
+import { ArrowUpDown, CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, XCircle } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal from '@/components/ReceiptModal.vue'
-import PaymentModal, { type ProcurementPayItem } from '@/components/PaymentModal.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
 import { api, attachmentUrl, formatCurrency, formatDate, formatNumber, generateUuid, variantLabel } from '@/lib/api'
 import { itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
-interface ProcurementRow extends ProcurementPayItem {
+interface ProcurementRow {
+  id: string
+  procurement_no: string
+  po_number: string | null
+  supplier_name: string
+  funding_source: 'company' | 'advanced'
+  funder_name: string | null
+  total_amount: number
+  paid_amount: number
+  remaining_amount: number
+  payment_status: 'unpaid' | 'partial' | 'paid'
+  reimbursement_status: string | null
+  reimbursed_amount: number
   procurement_date: string
   expected_date: string | null
   pr_number: string | null
@@ -75,19 +86,16 @@ const showDetailModal = ref(false)
 const detail = ref<ProcurementDetail | null>(null)
 const loadingDetail = ref(false)
 
-// Receipt & Payment direct modals
+// Receipt direct modal
 const showReceiptModal = ref(false)
 const receiptProcId = ref<string | null>(null)
-const showPaymentModal = ref(false)
-const paymentProcId = ref<string | null>(null)
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
 const filteredRows = computed(() => {
   const list = rows.value.filter((r) => {
     if (statusFilter.value === 'pending_progress' && !(r.status === 'ordered' || r.status === 'partial')) return false
-    else if (statusFilter.value === 'unpaid' && !(r.payment_status !== 'paid' && r.status !== 'cancelled')) return false
-    else if (statusFilter.value !== 'all' && statusFilter.value !== 'pending_progress' && statusFilter.value !== 'unpaid' && r.status !== statusFilter.value) return false
+    else if (statusFilter.value !== 'all' && statusFilter.value !== 'pending_progress' && r.status !== statusFilter.value) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
     return (
@@ -313,11 +321,6 @@ function openReceiveFor(id: string) {
   showReceiptModal.value = true
 }
 
-function openPayFor(id: string) {
-  paymentProcId.value = id
-  showPaymentModal.value = true
-}
-
 // Stat History Drill-down Modal
 const statModalOpen = ref(false)
 const statModalTitle = ref('')
@@ -326,7 +329,7 @@ const statModalEmpty = ref('')
 const statModalColumns = ref<HistoryColumn[]>([])
 const statModalRows = ref<Array<Record<string, HistoryCell>>>([])
 
-function openStatHistory(kind: 'all' | 'pending_progress' | 'unpaid') {
+function openStatHistory(kind: 'all' | 'pending_progress' | 'completed') {
   statModalOpen.value = true
   if (kind === 'all') {
     statModalTitle.value = 'Riwayat Semua Pengadaan Barang (PO)'
@@ -336,7 +339,7 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'unpaid') {
       { key: 'doc', label: 'Kode Pengadaan / PO' },
       { key: 'supplier', label: 'Supplier / Toko' },
       { key: 'progress', label: 'Progress Barang' },
-      { key: 'amount', label: 'Total Nilai' },
+      { key: 'amount', label: 'Nilai Pengadaan' },
       { key: 'status', label: 'Status' },
     ]
     statModalRows.value = rows.value.map((r) => {
@@ -345,7 +348,7 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'unpaid') {
         doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
         supplier: r.supplier_name,
         progress: `${formatNumber(r.total_received)} / ${formatNumber(r.total_ordered)} (${r.progress_percent}%)`,
-        amount: { text: formatCurrency(r.total_amount), sub: payBadge(r.payment_status).label, strong: true },
+        amount: { text: formatCurrency(r.total_amount), sub: r.payment_method === 'cash' ? 'Tunai' : 'Transfer', strong: true },
         status: { text: sb.label, pill: (sb.cls === 'blue' ? 'amber' : sb.cls) as 'safe' | 'amber' | 'out' | 'neutral' },
       }
     })
@@ -374,29 +377,24 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'unpaid') {
       }
     })
   } else {
-    const list = rows.value.filter((r) => r.payment_status !== 'paid' && r.status !== 'cancelled')
-    statModalTitle.value = 'Riwayat Pengadaan Belum Lunas'
-    statModalSubtitle.value = `${list.length} pengadaan memiliki sisa kewajiban pembayaran`
-    statModalEmpty.value = 'Semua pengadaan aktif sudah lunas.'
+    const list = rows.value.filter((r) => r.status === 'completed')
+    statModalTitle.value = 'Riwayat Pengadaan Terpenuhi (Selesai)'
+    statModalSubtitle.value = `${list.length} pengadaan sudah diterima lengkap 100%`
+    statModalEmpty.value = 'Belum ada pengadaan yang terpenuhi lengkap.'
     statModalColumns.value = [
       { key: 'doc', label: 'Kode Pengadaan / PO' },
       { key: 'supplier', label: 'Supplier / Toko' },
-      { key: 'total', label: 'Total Nilai' },
-      { key: 'paid', label: 'Sudah Dibayar' },
-      { key: 'remaining', label: 'Sisa Tagihan' },
-      { key: 'status', label: 'Status Bayar' },
+      { key: 'received', label: 'Total Diterima' },
+      { key: 'amount', label: 'Nilai Pengadaan' },
+      { key: 'status', label: 'Status' },
     ]
-    statModalRows.value = list.map((r) => {
-      const rem = Math.max(0, Number(r.remaining_amount ?? (Number(r.total_amount || 0) - Number(r.paid_amount || 0))))
-      return {
-        doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
-        supplier: r.supplier_name,
-        total: formatCurrency(r.total_amount),
-        paid: formatCurrency(r.paid_amount),
-        remaining: { text: formatCurrency(rem), strong: true },
-        status: { text: r.payment_status === 'partial' ? 'DP / Sebagian' : 'Belum Dibayar', pill: r.payment_status === 'partial' ? 'amber' : 'out' },
-      }
-    })
+    statModalRows.value = list.map((r) => ({
+      doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
+      supplier: r.supplier_name,
+      received: `${formatNumber(r.total_received)} unit (100%)`,
+      amount: { text: formatCurrency(r.total_amount), strong: true },
+      status: { text: 'Terpenuhi', pill: 'safe' },
+    }))
   }
 }
 
@@ -429,15 +427,6 @@ function statusBadge(s: string) {
   return map[s] || { label: s, cls: 'neutral' }
 }
 
-function payBadge(s: string) {
-  const map: Record<string, { label: string; cls: string }> = {
-    unpaid: { label: 'Belum Dibayar', cls: 'out' },
-    partial: { label: 'DP / Sebagian', cls: 'amber' },
-    paid: { label: 'Lunas', cls: 'safe' },
-  }
-  return map[s] || { label: s, cls: 'neutral' }
-}
-
 onMounted(() => {
   if (route.query.action === 'new') void openCreateModal()
   void Promise.all([load(), master.refresh()])
@@ -450,7 +439,7 @@ onMounted(() => {
       <div>
         <p class="eyebrow">Database Pengadaan Barang</p>
         <h2>Pengadaan Barang (PO)</h2>
-        <p>Buat rencana pengadaan, pantau progress kedatangan barang, dan kelola status pembayaran per pengadaan.</p>
+        <p>Buat rencana pengadaan dan pantau progress kedatangan barang. Nominal pengadaan otomatis tercatat di History Pembayaran.</p>
       </div>
       <div class="intro-actions">
         <button class="primary-button" @click="openCreateModal"><Plus :size="17" /> Buat Pengadaan Barang</button>
@@ -466,9 +455,9 @@ onMounted(() => {
         <span class="mini-icon unified"><PackageCheck :size="19" /></span>
         <p>Menunggu / Sebagian<strong>{{ rows.filter(r => r.status === 'ordered' || r.status === 'partial').length }}</strong></p>
       </button>
-      <button type="button" class="mini-stat-btn" @click="openStatHistory('unpaid')">
-        <span class="mini-icon unified"><Wallet :size="19" /></span>
-        <p>Belum Lunas<strong>{{ rows.filter(r => r.payment_status !== 'paid' && r.status !== 'cancelled').length }}</strong></p>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('completed')">
+        <span class="mini-icon unified"><CheckCircle2 :size="19" /></span>
+        <p>Terpenuhi (Selesai)<strong>{{ rows.filter(r => r.status === 'completed').length }}</strong></p>
       </button>
     </section>
 
@@ -494,7 +483,7 @@ onMounted(() => {
                 </button>
               </th>
               <th>Toko Online / Supplier</th><th>Item Dipesan</th>
-              <th>Progress Kedatangan</th><th>Nilai &amp; Pembayaran</th><th>Aksi</th>
+              <th>Progress Kedatangan</th><th>Nilai Pengadaan</th><th>Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -531,9 +520,10 @@ onMounted(() => {
               <td>
                 <strong class="table-main">{{ formatCurrency(row.total_amount) }}</strong>
                 <div class="tag-group" style="margin-top: 4px;">
-                  <span class="status-pill" :class="payBadge(row.payment_status).cls">{{ payBadge(row.payment_status).label }}</span>
+                  <span class="tag-pill">{{ row.payment_method === 'cash' ? 'Tunai / Kas' : 'Transfer' }}</span>
                   <span v-if="row.funding_source === 'advanced'" class="tag-pill">Talangan</span>
                 </div>
+                <small v-if="Number(row.total_amount) > 0 && row.status !== 'cancelled'" class="table-sub">Tercatat di History Pembayaran</small>
               </td>
               <td>
                 <div class="row-actions">
@@ -544,14 +534,6 @@ onMounted(() => {
                     @click="openReceiveFor(row.id)"
                   >
                     <PackageCheck :size="13" /> Terima
-                  </button>
-                  <button
-                    v-if="row.payment_status !== 'paid' && row.status !== 'cancelled'"
-                    class="secondary-button xs"
-                    title="Catat pembayaran"
-                    @click="openPayFor(row.id)"
-                  >
-                    <Wallet :size="13" /> Bayar
                   </button>
                   <button
                     v-if="row.status !== 'cancelled'"
@@ -707,7 +689,7 @@ onMounted(() => {
         <div class="summary-banner">
           <div><small>Supplier</small><strong>{{ detail.supplier_name }}</strong></div>
           <div><small>Progress Barang</small><strong>{{ detail.progress_percent }}% ({{ detail.total_received }}/{{ detail.total_ordered }})</strong></div>
-          <div><small>Pembayaran</small><strong>{{ formatCurrency(detail.paid_amount) }} / {{ formatCurrency(detail.total_amount) }}</strong></div>
+          <div><small>Total Nilai Pengadaan</small><strong>{{ formatCurrency(detail.total_amount) }}</strong></div>
         </div>
 
         <div class="detail-section">
@@ -741,19 +723,6 @@ onMounted(() => {
           </div>
           <p v-else class="muted-text">Belum ada barang masuk yang diterima untuk pengadaan ini.</p>
         </div>
-
-        <div class="detail-section">
-          <h4>Riwayat Pembayaran ({{ detail.payments.length }})</h4>
-          <div v-if="detail.payments.length" class="mini-list">
-            <div v-for="pay in detail.payments" :key="pay.id" class="mini-list-row">
-              <Wallet :size="15" class="text-primary" />
-              <strong>{{ formatCurrency(pay.amount) }}</strong>
-              <span>{{ formatDate(pay.paid_at) }} · {{ pay.payment_type.toUpperCase() }} ({{ pay.payment_method }})</span>
-              <span v-if="pay.reference_no" class="tag-pill">{{ pay.reference_no }}</span>
-            </div>
-          </div>
-          <p v-else class="muted-text">Belum ada pembayaran tercatat.</p>
-        </div>
       </div>
       <template #footer>
         <button type="button" class="secondary-button" @click="showDetailModal = false">Tutup</button>
@@ -764,7 +733,6 @@ onMounted(() => {
     </BaseModal>
 
     <ReceiptModal :open="showReceiptModal" :initial-procurement-id="receiptProcId" @close="showReceiptModal = false" @saved="load" />
-    <PaymentModal :open="showPaymentModal" :procurements="rows" :initial-procurement-id="paymentProcId" @close="showPaymentModal = false" @saved="load" />
 
     <StatHistoryModal
       :open="statModalOpen"

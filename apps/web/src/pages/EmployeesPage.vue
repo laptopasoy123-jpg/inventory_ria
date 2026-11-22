@@ -498,13 +498,17 @@ onMounted(load)
               </td>
               <td><span class="tag-pill">{{ contractLabel(row.employee.contract_status) }}</span></td>
               <td>
-                <div v-if="row.activeItems.length" class="compact-items">
-                  <span v-for="(item, idx) in row.activeItems.slice(0, 3)" :key="idx">
-                    <strong>{{ formatNumber(item.remaining) }} {{ item.unit }}</strong> {{ item.itemName }}
-                  </span>
-                  <small v-if="row.activeItems.length > 3" class="table-sub">+{{ row.activeItems.length - 3 }} item lainnya</small>
-                </div>
-                <span v-else class="status-pill safe">Tidak ada tanggungan</span>
+                <ul v-if="row.activeItems.length" class="apd-holding-list">
+                  <li v-for="(item, idx) in row.activeItems" :key="idx">
+                    <span class="apd-holding-bullet" />
+                    <span class="apd-holding-name">
+                      <strong>{{ item.itemName }}</strong>
+                      <small>{{ formatDate(item.issuedAt) }} · {{ item.txNo }}</small>
+                    </span>
+                    <span class="tag-pill apd-holding-qty">{{ formatNumber(item.remaining) }} {{ item.unit }}</span>
+                  </li>
+                </ul>
+                <span v-else class="status-pill safe">Sudah dikembalikan / Bebas tanggungan</span>
               </td>
               <td>
                 <span class="tag-pill">{{ row.returnHistory.length }} catatan</span>

@@ -35,7 +35,7 @@ const sectionList: Array<{ key: ReportSectionKey; label: string }> = [
   { key: 'procurements', label: 'Pengadaan & Progress' },
   { key: 'opname', label: 'Stok Opname (+/-)' },
   { key: 'liabilities', label: 'Tanggungan Karyawan' },
-  { key: 'payments', label: 'Pembayaran' },
+  { key: 'payments', label: 'History Pembayaran' },
 ]
 
 const allSectionsSelected = computed(() =>
@@ -53,7 +53,6 @@ const movements = ref<Array<{ id: number; occurred_at: string; movement_type: st
 const procurements = ref<Array<{ procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
 const stocktakes = ref<Array<{ stocktake_no: string; reference_at: string; officer_name: string; status: string; stocktake_items: Array<{ condition: string; system_quantity: number; physical_quantity: number; reason: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }> }>>([])
 const liabilities = ref<Array<{ quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string; issuances?: { transaction_no: string; issued_at: string; employees?: { nik: string; name: string; departments?: { name: string } | null } | null } | null; item_variants?: { size: string; items?: { name: string; unit: string } | null } | null }>>([])
-const payments = ref<Array<{ paid_at: string; amount: number; payment_type: string; payment_method: string; reference_no: string | null; procurements?: { procurement_no: string; suppliers?: { name: string } | null } | null }>>([])
 
 function inDateRange(dateStr?: string | null): boolean {
   if (!dateStr) return true
@@ -67,7 +66,9 @@ const filteredMovements = computed(() => movements.value.filter((m) => inDateRan
 const filteredProcurements = computed(() => procurements.value.filter((p) => inDateRange(p.procurement_date)))
 const filteredStocktakes = computed(() => stocktakes.value.filter((s) => inDateRange(s.reference_at)))
 const filteredLiabilities = computed(() => liabilities.value.filter((l) => inDateRange(l.issuances?.issued_at)))
-const filteredPayments = computed(() => payments.value.filter((p) => inDateRange(p.paid_at)))
+const filteredPayments = computed(() =>
+  filteredProcurements.value.filter((p) => p.status !== 'cancelled' && Number(p.total_amount || 0) > 0),
+)
 
 const periodLabel = computed(() => {
   if (dateFrom.value && dateTo.value) return `${formatDate(dateFrom.value)} s/d ${formatDate(dateTo.value)}`
@@ -115,19 +116,17 @@ async function loadAll(force = false) {
   loading.value = true
   loadError.value = ''
   try {
-    const [m, pr, st, lb, py] = await Promise.all([
+    const [m, pr, st, lb] = await Promise.all([
       api<{ data: typeof movements.value }>('/api/inventory/movements?limit=300'),
       api<{ data: typeof procurements.value }>('/api/procurements'),
       api<{ data: typeof stocktakes.value }>('/api/transactions/stocktakes'),
       api<{ data: typeof liabilities.value }>('/api/transactions/liabilities'),
-      api<{ data: typeof payments.value }>('/api/procurements/payments/all'),
       master.refresh(force),
     ])
     movements.value = m.data
     procurements.value = pr.data
     stocktakes.value = st.data
     liabilities.value = lb.data
-    payments.value = py.data
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : 'Gagal memuat data laporan'
   } finally {
@@ -181,7 +180,7 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
     sections.push({
       title: '3. Pengadaan Barang & Progress Kedatangan',
       subtitle: `${filteredProcurements.value.length} dokumen pengadaan`,
-      headers: ['No. Pengadaan', 'Tanggal', 'No. PO', 'Supplier', 'Progress Barang', 'Total Nilai', 'Terbayar', 'Status Bayar'],
+      headers: ['No. Pengadaan', 'Tanggal', 'No. PO', 'Supplier', 'Progress Barang', 'Nilai Pengadaan', 'Status'],
       rows: filteredProcurements.value.map((p) => [
         p.procurement_no,
         formatDate(p.procurement_date),
@@ -189,8 +188,7 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
         p.supplier_name,
         `${p.progress_percent}% (${formatNumber(p.total_received)}/${formatNumber(p.total_ordered)})`,
         formatCurrency(p.total_amount),
-        formatCurrency(p.paid_amount),
-        p.payment_status === 'paid' ? 'Lunas' : p.payment_status === 'partial' ? 'Sebagian' : 'Belum Dibayar',
+        p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu',
       ]),
     })
   }
@@ -239,17 +237,16 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
 
   if (selectedSections.payments) {
     sections.push({
-      title: '6. Riwayat Pembayaran Pengadaan',
-      subtitle: `${filteredPayments.value.length} transaksi pembayaran`,
-      headers: ['Tanggal Bayar', 'No. Pengadaan', 'Supplier', 'Jenis', 'Metode', 'Nominal', 'Referensi'],
+      title: '6. History Pembayaran (Nominal Pengadaan Tercatat)',
+      subtitle: `${filteredPayments.value.length} transaksi pengadaan bernominal`,
+      headers: ['Tanggal', 'No. Pengadaan', 'No. PO', 'Supplier', 'Nominal', 'Progress'],
       rows: filteredPayments.value.map((p) => [
-        formatDate(p.paid_at),
-        p.procurements?.procurement_no || '-',
-        p.procurements?.suppliers?.name || '-',
-        p.payment_type.toUpperCase(),
-        p.payment_method === 'transfer' ? 'Transfer' : 'Tunai',
-        formatCurrency(p.amount),
-        p.reference_no || '-',
+        formatDate(p.procurement_date),
+        p.procurement_no,
+        p.po_number || '-',
+        p.supplier_name,
+        formatCurrency(p.total_amount),
+        `${p.progress_percent}%`,
       ]),
     })
   }
@@ -325,8 +322,8 @@ function exportActiveCsv() {
     downloadCsv(`laporan-tanggungan-${d}.csv`, ['No Keluar', 'Tanggal', 'NIK', 'Karyawan', 'Departemen', 'Barang', 'Ukuran', 'Sisa Tanggungan'],
       filteredLiabilities.value.map(l => [l.issuances?.transaction_no, l.issuances?.issued_at, l.issuances?.employees?.nik, l.issuances?.employees?.name, l.issuances?.employees?.departments?.name, l.item_variants?.items?.name, l.item_variants?.size, Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity)]))
   } else {
-    downloadCsv(`laporan-pembayaran-${d}.csv`, ['Tanggal', 'No Pengadaan', 'Supplier', 'Jenis', 'Metode', 'Nominal', 'Referensi'],
-      filteredPayments.value.map(p => [p.paid_at, p.procurements?.procurement_no, p.procurements?.suppliers?.name, p.payment_type, p.payment_method, p.amount, p.reference_no]))
+    downloadCsv(`history-pembayaran-${d}.csv`, ['Tanggal', 'No Pengadaan', 'PO', 'Supplier', 'Nominal', 'Status'],
+      filteredPayments.value.map(p => [p.procurement_date, p.procurement_no, p.po_number || '-', p.supplier_name, p.total_amount, p.status]))
   }
 }
 
@@ -419,7 +416,7 @@ onMounted(() => void loadAll())
         <button :class="{ active: activeTab === 'procurements' }" @click="activeTab = 'procurements'">Pengadaan ({{ filteredProcurements.length }})</button>
         <button :class="{ active: activeTab === 'opname' }" @click="activeTab = 'opname'">Stok Opname (+/-)</button>
         <button :class="{ active: activeTab === 'liabilities' }" @click="activeTab = 'liabilities'">Tanggungan ({{ filteredLiabilities.length }})</button>
-        <button :class="{ active: activeTab === 'payments' }" @click="activeTab = 'payments'">Pembayaran ({{ filteredPayments.length }})</button>
+        <button :class="{ active: activeTab === 'payments' }" @click="activeTab = 'payments'">History Pembayaran ({{ filteredPayments.length }})</button>
         <button :class="{ active: activeTab === 'stock' }" @click="activeTab = 'stock'">Saldo Stok ({{ master.variants.length }})</button>
       </div>
 
@@ -494,17 +491,16 @@ onMounted(() => void loadAll())
 
       <div v-else-if="activeTab === 'procurements'" class="table-wrap">
         <table>
-          <thead><tr><th>No. Pengadaan</th><th>Supplier</th><th>Progress Barang</th><th>Nilai Pengadaan</th><th>Terbayar</th><th>Status Bayar</th></tr></thead>
+          <thead><tr><th>No. Pengadaan</th><th>Supplier</th><th>Progress Barang</th><th>Nilai Pengadaan</th><th>Status</th></tr></thead>
           <tbody>
             <tr v-for="p in filteredProcurements" :key="p.procurement_no">
               <td><strong>{{ p.procurement_no }}</strong><small class="table-sub">{{ formatDate(p.procurement_date) }} {{ p.po_number ? `· PO: ${p.po_number}` : '' }}</small></td>
               <td>{{ p.supplier_name }}</td>
               <td><strong>{{ p.progress_percent }}%</strong> ({{ formatNumber(p.total_received) }} / {{ formatNumber(p.total_ordered) }})</td>
-              <td>{{ formatCurrency(p.total_amount) }}</td>
-              <td>{{ formatCurrency(p.paid_amount) }}</td>
-              <td><span class="status-pill" :class="p.payment_status === 'paid' ? 'safe' : 'amber'">{{ p.payment_status === 'paid' ? 'Lunas' : p.payment_status === 'partial' ? 'Sebagian' : 'Belum Dibayar' }}</span></td>
+              <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
+              <td><span class="status-pill" :class="p.status === 'completed' ? 'safe' : p.status === 'cancelled' ? 'out' : 'amber'">{{ p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' }}</span></td>
             </tr>
-            <tr v-if="!filteredProcurements.length"><td colspan="6"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredProcurements.length"><td colspan="5"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal ini.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -552,18 +548,17 @@ onMounted(() => void loadAll())
 
       <div v-else class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>No. Pengadaan</th><th>Supplier</th><th>Jenis</th><th>Metode</th><th>Nominal</th><th>Referensi</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>No. Pengadaan</th><th>No. PO</th><th>Supplier</th><th>Nominal</th><th>Progress</th></tr></thead>
           <tbody>
             <tr v-for="(p, idx) in filteredPayments" :key="idx">
-              <td>{{ formatDate(p.paid_at) }}</td>
-              <td><strong>{{ p.procurements?.procurement_no || '-' }}</strong></td>
-              <td>{{ p.procurements?.suppliers?.name || '-' }}</td>
-              <td>{{ p.payment_type }}</td>
-              <td>{{ p.payment_method }}</td>
-              <td><strong>{{ formatCurrency(p.amount) }}</strong></td>
-              <td>{{ p.reference_no || '-' }}</td>
+              <td>{{ formatDate(p.procurement_date) }}</td>
+              <td><strong>{{ p.procurement_no }}</strong></td>
+              <td>{{ p.po_number || '-' }}</td>
+              <td>{{ p.supplier_name }}</td>
+              <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
+              <td>{{ p.progress_percent }}%</td>
             </tr>
-            <tr v-if="!filteredPayments.length"><td colspan="7"><div class="empty-state compact">Tidak ada pembayaran pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredPayments.length"><td colspan="6"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal ini.</div></td></tr>
           </tbody>
         </table>
       </div>
