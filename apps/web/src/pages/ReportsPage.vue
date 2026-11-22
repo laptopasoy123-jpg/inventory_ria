@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { AlertTriangle, CalendarRange, CheckSquare, Download, FileDown, Printer, RefreshCw } from '@lucide/vue'
-import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, getApiCacheVersion, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
 import type { PdfSectionTable } from '@/lib/pdf-report'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -327,7 +327,14 @@ function exportActiveCsv() {
   }
 }
 
-onMounted(() => void loadAll())
+let lastCacheVer = -1
+onMounted(() => { lastCacheVer = getApiCacheVersion(); void loadAll() })
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void loadAll()
+  }
+})
 </script>
 
 <template>
@@ -357,17 +364,17 @@ onMounted(() => void loadAll())
       </div>
     </section>
 
-    <section class="page-intro screen-only-intro">
+    <section class="page-intro screen-only-intro report-intro">
       <div>
         <p class="eyebrow">Analitik, Cetak &amp; Ekspor</p>
         <h2>Laporan Inventaris</h2>
         <p>Tampilkan semua sesi sekaligus atau pilih sesi tertentu untuk ditinjau, dicetak, dan diunduh ke PDF/CSV.</p>
       </div>
-      <div class="intro-actions">
-        <button class="secondary-button square" aria-label="Muat ulang" @click="loadAll(true)"><RefreshCw :size="16" :class="{ spinning: loading }" /></button>
-        <button class="secondary-button" @click="exportActiveCsv"><Download :size="16" /> {{ activeTab === 'all' ? 'Ekspor CSV Semua' : 'Ekspor CSV Tab' }}</button>
+      <div class="intro-actions report-actions-bar">
+        <button class="primary-button report-pdf-btn" @click="downloadPdfReport"><FileDown :size="16" /> Download PDF</button>
+        <button class="secondary-button" @click="exportActiveCsv"><Download :size="16" /> {{ activeTab === 'all' ? 'Ekspor CSV' : 'CSV Tab' }}</button>
         <button class="secondary-button" @click="printReport"><Printer :size="16" /> Cetak</button>
-        <button class="primary-button" @click="downloadPdfReport"><FileDown :size="16" /> Download PDF</button>
+        <button class="secondary-button square" aria-label="Muat ulang" @click="loadAll(true)"><RefreshCw :size="16" :class="{ spinning: loading }" /></button>
       </div>
     </section>
 
@@ -380,8 +387,8 @@ onMounted(() => void loadAll())
     <section class="panel report-builder-panel screen-only-intro">
       <div class="builder-row">
         <div class="builder-block">
-          <div class="builder-title" style="justify-content:space-between;width:100%;">
-            <span style="display:inline-flex;align-items:center;gap:6px;"><CheckSquare :size="15" /> <strong>Pilih Sesi Laporan (Tampilan Semua / Cetak / PDF)</strong></span>
+          <div class="builder-title builder-title-spread">
+            <span class="builder-title-label"><CheckSquare :size="15" /> <strong>Pilih Sesi Laporan</strong></span>
             <button type="button" class="secondary-button xs" @click="toggleSelectAllSections">
               {{ allSectionsSelected ? 'Hapus Semua' : 'Pilih Semua' }}
             </button>
@@ -395,14 +402,18 @@ onMounted(() => void loadAll())
         </div>
 
         <div class="builder-block">
-          <div class="builder-title"><CalendarRange :size="15" /> <strong>Rentang Tanggal (Arus APD, Pengadaan, Opname, Pembayaran)</strong></div>
-          <div class="date-range-controls">
-            <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" @input="activePreset = 'custom'" />
-            <span>s/d</span>
-            <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" @input="activePreset = 'custom'" />
-            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'all' }" @click="setPreset('all')">Semua</button>
-            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'month' }" @click="setPreset('month')">Bulan Ini</button>
-            <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === '30d' }" @click="setPreset('30d')">30 Hari</button>
+          <div class="builder-title"><CalendarRange :size="15" /> <strong>Rentang Tanggal Laporan</strong></div>
+          <div class="date-range-stack">
+            <div class="date-inputs-row">
+              <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" @input="activePreset = 'custom'" />
+              <span class="date-sep">s/d</span>
+              <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" @input="activePreset = 'custom'" />
+            </div>
+            <div class="date-presets-row">
+              <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'all' }" @click="setPreset('all')">Semua</button>
+              <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === 'month' }" @click="setPreset('month')">Bulan Ini</button>
+              <button type="button" class="secondary-button xs" :class="{ highlight: activePreset === '30d' }" @click="setPreset('30d')">30 Hari</button>
+            </div>
           </div>
         </div>
       </div>

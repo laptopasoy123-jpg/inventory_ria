@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowUpDown, CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, XCircle } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
@@ -7,7 +7,7 @@ import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal from '@/components/ReceiptModal.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, attachmentUrl, formatCurrency, formatDate, formatNumber, generateUuid, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, formatCurrency, formatDate, formatNumber, generateUuid, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -427,9 +427,18 @@ function statusBadge(s: string) {
   return map[s] || { label: s, cls: 'neutral' }
 }
 
+let lastCacheVer = -1
 onMounted(() => {
   if (route.query.action === 'new') void openCreateModal()
+  lastCacheVer = getApiCacheVersion()
   void Promise.all([load(), master.refresh()])
+})
+onActivated(() => {
+  if (route.query.action === 'new') void openCreateModal()
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void Promise.all([load(), master.refresh()])
+  }
 })
 </script>
 

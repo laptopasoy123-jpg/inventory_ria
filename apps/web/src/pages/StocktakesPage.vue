@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, Edit3, Eye, Plus, Search } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, conditionLabel, downloadCsv, formatDate, formatNumber, variantLabel } from '@/lib/api'
+import { api, conditionLabel, downloadCsv, formatDate, formatNumber, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
@@ -417,7 +417,14 @@ function exportVarianceCsv(st: StocktakeRow) {
   )
 }
 
-onMounted(load)
+let lastCacheVer = -1
+onMounted(() => { lastCacheVer = getApiCacheVersion(); void load() })
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void load()
+  }
+})
 </script>
 
 <template>

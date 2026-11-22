@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { AlertTriangle, ArrowUpDown, Edit3, PackageMinus, Plus, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
-import { api, attachmentUrl, conditionLabel, formatDate, formatNumber, generateUuid, uploadAttachment, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, formatDate, formatNumber, generateUuid, getApiCacheVersion, uploadAttachment, variantLabel } from '@/lib/api'
 import { itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -219,9 +219,18 @@ async function submit() {
   }
 }
 
+let lastCacheVer = -1
 onMounted(() => {
   if (route.query.action === 'new') void openModal()
+  lastCacheVer = getApiCacheVersion()
   void Promise.all([load(), master.refresh()])
+})
+onActivated(() => {
+  if (route.query.action === 'new') void openModal()
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void Promise.all([load(), master.refresh()])
+  }
 })
 </script>
 

@@ -1,33 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  AlertTriangle, ArrowRightLeft, ArrowUpRight, Bell, Boxes, CalendarDays, ClipboardCheck, Clock,
+  AlertTriangle, ArrowRightLeft, ArrowUpRight, Bell, Boxes, ClipboardCheck,
   FileBarChart, LayoutDashboard, Menu, PackageCheck, PackageMinus, PackagePlus, ReceiptText,
   RefreshCw, Search, Settings2, ShieldCheck, ShoppingBag, UsersRound, X,
 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
-import { api, attachmentUrl, conditionLabel, formatDate, formatNumber, invalidateApiCache, variantLabel } from '@/lib/api'
+import LiveClock from '@/components/LiveClock.vue'
+import { api, attachmentUrl, conditionLabel, formatDate, formatNumber, invalidateApiCache, prefetchApi, variantLabel } from '@/lib/api'
 import { useMasterStore } from '@/stores/master'
-
-const clockDateFmt = new Intl.DateTimeFormat('id-ID', {
-  weekday: 'long',
-  day: '2-digit',
-  month: 'long',
-  year: 'numeric',
-})
-const clockTimeFmt = new Intl.DateTimeFormat('id-ID', {
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-})
 
 const route = useRoute()
 const router = useRouter()
 const master = useMasterStore()
 const sidebarOpen = ref(false)
 const quickQuery = ref('')
+const currentYear = new Date().getFullYear()
 
 // Activity & Notification Center state
 const showActivityModal = ref(false)
@@ -41,12 +30,6 @@ const recentMovements = ref<Array<{
   quantity_delta: number; balance_after: number; notes: string | null;
   item_variants?: { size: string; items?: { code?: string; name: string; unit: string } | null } | null
 }>>([])
-
-const now = ref(new Date())
-let clockTimer: number | undefined
-
-const formattedDate = computed(() => clockDateFmt.format(now.value))
-const formattedTime = computed(() => clockTimeFmt.format(now.value).replace(/\./g, ':'))
 
 const navGroups = [
   {
@@ -86,6 +69,44 @@ const navGroups = [
     ],
   },
 ]
+
+const prefetched = new Set<string>()
+function prefetchNav(name: string) {
+  if (prefetched.has(name)) return
+  prefetched.add(name)
+  if (name === 'inventory') {
+    void import('@/pages/InventoryPage.vue')
+    prefetchApi('/api/inventory?page=1&limit=200&search=')
+  } else if (name === 'stocktakes') {
+    void import('@/pages/StocktakesPage.vue')
+    prefetchApi('/api/transactions/stocktakes')
+  } else if (name === 'procurements') {
+    void import('@/pages/ProcurementsPage.vue')
+    prefetchApi('/api/procurements')
+  } else if (name === 'receipts') {
+    void import('@/pages/ReceiptsPage.vue')
+    prefetchApi('/api/transactions/purchases')
+  } else if (name === 'issuances') {
+    void import('@/pages/IssuancesPage.vue')
+    prefetchApi('/api/transactions/issuances')
+  } else if (name === 'returns') {
+    void import('@/pages/ReturnsPage.vue')
+    prefetchApi('/api/transactions/returns')
+  } else if (name === 'employees') {
+    void import('@/pages/EmployeesPage.vue')
+    prefetchApi('/api/transactions/issuances')
+    prefetchApi('/api/transactions/returns')
+  } else if (name === 'payments') {
+    void import('@/pages/PaymentsPage.vue')
+    prefetchApi('/api/procurements')
+    prefetchApi('/api/transactions/purchases')
+  } else if (name === 'reports') {
+    void import('@/pages/ReportsPage.vue')
+    prefetchApi('/api/inventory/movements?limit=300')
+  } else if (name === 'master') {
+    void import('@/pages/MasterDataPage.vue')
+  }
+}
 
 const allNav = navGroups.flatMap((g) => g.items)
 const pageTitle = computed(() => allNav.find((item) => item.name === route.name)?.label || 'Inventaris APD')
@@ -177,55 +198,50 @@ function onQuickSearch() {
 }
 
 onMounted(() => {
-  clockTimer = window.setInterval(() => {
-    now.value = new Date()
-  }, 1000)
   master.refresh().catch(() => {})
-})
-
-onUnmounted(() => {
-  if (clockTimer) window.clearInterval(clockTimer)
 })
 </script>
 
 <template>
   <div class="app-shell">
-    <div v-if="sidebarOpen" class="mobile-backdrop" @click="sidebarOpen = false" />
+    <div v-if="sidebarOpen" class="sidebar-backdrop" @click="sidebarOpen = false" />
     <aside class="sidebar" :class="{ open: sidebarOpen }">
-      <div class="sidebar-top">
-        <div class="brand-lockup">
+      <div class="brand-panel">
+        <div class="brand-top">
           <div class="brand-mark"><ShieldCheck :size="20" /></div>
-          <div class="brand-copy"><strong>INVENTRA</strong><span>APD Asset Control</span></div>
-          <button class="icon-button mobile-only" aria-label="Tutup menu" @click="sidebarOpen = false"><X :size="18" /></button>
+          <div class="brand-titles"><strong>INVENTRA</strong><span>APD Asset Control</span></div>
+          <button class="icon-button sidebar-close" aria-label="Tutup menu" @click="sidebarOpen = false"><X :size="18" /></button>
         </div>
 
-        <RouterLink :to="{ name: 'master' }" class="company-badge-card" title="Ubah identitas & logo perusahaan" @click="sidebarOpen = false">
-          <div class="company-avatar" :class="{ 'has-logo': Boolean(master.company.logoKey) }">
+        <RouterLink :to="{ name: 'master' }" class="workspace-pill" title="Ubah identitas & logo perusahaan" @click="sidebarOpen = false">
+          <div class="workspace-icon" :class="{ 'has-logo': Boolean(master.company.logoKey) }">
             <img v-if="master.company.logoKey" :src="attachmentUrl(master.company.logoKey)" :alt="master.company.name" />
             <span v-else>{{ master.companyInitials }}</span>
           </div>
-          <div class="company-meta">
+          <div class="workspace-meta">
             <strong>{{ master.company.name }}</strong>
             <small>{{ master.company.tagline }}</small>
           </div>
-          <Settings2 :size="14" class="company-edit-ico" />
+          <Settings2 :size="14" class="workspace-gear" />
         </RouterLink>
       </div>
 
-      <nav class="nav-list">
-        <div v-for="group in navGroups" :key="group.section" class="nav-group">
+      <nav class="nav-plots">
+        <div v-for="group in navGroups" :key="group.section" class="nav-plot">
           <p class="nav-section">{{ group.section }}</p>
-          <RouterLink
-            v-for="item in group.items"
-            :key="item.name"
-            :to="{ name: item.name }"
-            class="nav-link"
-            :class="{ active: route.name === item.name }"
-            @click="sidebarOpen = false"
-          >
-            <component :is="item.icon" :size="18" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
+          <div class="nav-list">
+            <RouterLink
+              v-for="item in group.items"
+              :key="item.name"
+              :to="{ name: item.name }"
+              @mouseenter="prefetchNav(item.name)"
+              @focus="prefetchNav(item.name)"
+              @click="sidebarOpen = false"
+            >
+              <component :is="item.icon" :size="17" />
+              <span>{{ item.label }}</span>
+            </RouterLink>
+          </div>
         </div>
       </nav>
 
@@ -258,11 +274,7 @@ onUnmounted(() => {
         </div>
 
         <div class="topbar-center">
-          <div class="live-clock-pill" title="Waktu lokal sistem">
-            <span class="clock-date"><CalendarDays :size="14" /> {{ formattedDate }}</span>
-            <span class="clock-sep" />
-            <span class="clock-time"><Clock :size="14" /> {{ formattedTime }} WIB</span>
-          </div>
+          <LiveClock />
         </div>
 
         <div class="top-actions">
@@ -284,9 +296,9 @@ onUnmounted(() => {
       </header>
       <div class="page-content">
         <RouterView v-slot="{ Component }">
-          <Transition name="page-fade" mode="out-in">
+          <KeepAlive :max="8">
             <component :is="Component" />
-          </Transition>
+          </KeepAlive>
         </RouterView>
       </div>
       <footer class="app-footer">
@@ -294,7 +306,7 @@ onUnmounted(() => {
           <span>INVENTRA · <strong>{{ master.company.name }}</strong> — Sistem Kontrol Inventaris APD</span>
         </div>
         <a href="https://daysheet.id" target="_blank" rel="noopener noreferrer" class="footer-copyright" title="Kunjungi situs resmi DaySheet.id">
-          <span>© {{ now.getFullYear() }}</span>
+          <span>© {{ currentYear }}</span>
           <span class="footer-logo-chip"><img src="/daysheet-logo.png" alt="DaySheet.id" /></span>
           <span>All rights reserved</span>
         </a>

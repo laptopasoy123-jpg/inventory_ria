@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { ArrowUpDown, Download, ReceiptText, Search, ShoppingBag, Truck, Wallet } from '@lucide/vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, downloadCsv, formatCurrency, formatDate } from '@/lib/api'
+import { api, downloadCsv, formatCurrency, formatDate, getApiCacheVersion } from '@/lib/api'
 
 interface ProcurementRecord {
   id: string
@@ -204,7 +204,14 @@ async function load() {
   }
 }
 
-onMounted(load)
+let lastCacheVer = -1
+onMounted(() => { lastCacheVer = getApiCacheVersion(); void load() })
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void load()
+  }
+})
 </script>
 
 <template>

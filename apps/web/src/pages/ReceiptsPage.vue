@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowUpDown, Edit3, Plus, Search, Truck } from '@lucide/vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal, { type EditablePurchase } from '@/components/ReceiptModal.vue'
-import { api, conditionLabel, formatDate, formatNumber } from '@/lib/api'
+import { api, conditionLabel, formatDate, formatNumber, getApiCacheVersion } from '@/lib/api'
 
 interface PurchaseRow extends EditablePurchase {
   transaction_no: string
@@ -87,9 +87,18 @@ async function load() {
   }
 }
 
+let lastCacheVer = -1
 onMounted(() => {
   if (route.query.action === 'new') openAdd()
+  lastCacheVer = getApiCacheVersion()
   void load()
+})
+onActivated(() => {
+  if (route.query.action === 'new') openAdd()
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void load()
+  }
 })
 </script>
 

@@ -313,7 +313,7 @@ h1, h2, h3, h4, .brand strong { font-family: 'Manrope', sans-serif; }
 .unit-list button strong { grid-row: span 2; align-self: center; color: #16212e; font-size: 18px; }
 .unit-list button small { margin-top: 2px; color: #8c96a3; font-size: 11px; }
 .purchase-strip { display: flex; gap: 11px; align-items: center; margin-top: 14px; padding-top: 13px; border-top: 1px dashed var(--border); }
-.purchase-strip > span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; background: #f0edfa; color: #7256b2; }
+.purchase-strip > span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; background: #e7f6f4; color: #0b7d72; border: 1px solid #d3ebe7; flex-shrink: 0; }
 .purchase-strip div { display: flex; flex-direction: column; }
 .purchase-strip small { color: #84909e; font-size: 11px; }
 .purchase-strip strong { font-size: 14px; margin-top: 2px; }
@@ -1230,5 +1230,166 @@ tr:hover .item-flaticon-box { transform: scale(1.08) rotate(-3deg); }
     align-items: center;
     padding-top: 6px;
     border-top: 1px dashed #DCECE9;
+  }
+}
+
+
+/* Simplified Dashboard Digest, 4-Card Grid, Chart Values & Mobile Reports Polish */
+.stats-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+.stat-val-teal { color: #0b7d72 !important; }
+.stat-val-amber { color: #b56d0b !important; }
+.stat-val-red { color: #c03934 !important; }
+
+.dash-digest-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: #effaf8;
+  border: 1px solid #c9ebe4;
+  color: #16333c;
+  font-size: 13px;
+}
+.dash-digest-banner.warn {
+  background: #fff9ee;
+  border-color: #f4d8a8;
+  color: #5c3a09;
+}
+.dash-digest-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 220px;
+}
+.dash-digest-left svg {
+  flex-shrink: 0;
+  color: #0b7d72;
+}
+.dash-digest-banner.warn .dash-digest-left svg {
+  color: #c2780a;
+}
+
+.bar {
+  position: relative;
+}
+.bar-val {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  color: #243947;
+  white-space: nowrap;
+}
+
+/* Mobile-friendly Report Builder & Clean Scrollable Tabs */
+.builder-title-spread {
+  justify-content: space-between;
+  width: 100%;
+  flex-wrap: wrap;
+}
+.builder-title-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.date-range-stack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.date-inputs-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.date-sep {
+  font-size: 12px;
+  color: #6b7a8c;
+  font-weight: 600;
+}
+.date-presets-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.record-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.record-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .stats-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .stats-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .stats-grid-4 .stat-card:first-child {
+    grid-column: span 1 !important;
+  }
+  .report-actions-bar {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+  }
+  .report-pdf-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .report-builder-panel {
+    padding: 14px;
+  }
+  .checklist-pills {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .check-pill {
+    width: 100%;
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+  .date-range-stack {
+    width: 100%;
+    display: grid;
+    gap: 8px;
+  }
+  .date-inputs-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    width: 100%;
+  }
+  .date-inputs-row .compact-date {
+    width: 100%;
+    min-width: 0;
+  }
+  .date-presets-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+  }
+  .date-presets-row button {
+    width: 100%;
   }
 }

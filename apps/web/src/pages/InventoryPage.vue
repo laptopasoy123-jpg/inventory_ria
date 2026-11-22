@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   ArrowRightLeft, ClipboardList, Download,
@@ -10,7 +10,7 @@ import ItemFormModal from '@/components/ItemFormModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, attachmentUrl, conditionLabel, downloadCsv, formatDate, formatNumber, generateUuid, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatDate, formatNumber, generateUuid, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { flaticonAssets, itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -478,7 +478,8 @@ watch(search, (value) => {
 watch(status, () => { page.value = 1 })
 watch(debouncedSearch, load)
 
-onMounted(() => {
+let lastCacheVer = -1
+function applyInventoryRouteQuery() {
   const qs = String(route.query.status || '')
   if (['safe', 'low', 'out', 'attention', 'quarantine_damaged'].includes(qs)) {
     status.value = qs
@@ -491,7 +492,20 @@ onMounted(() => {
   if (route.query.action === 'opening-stock') {
     void openOpeningStockModal()
   }
+}
+
+onMounted(() => {
+  applyInventoryRouteQuery()
+  lastCacheVer = getApiCacheVersion()
   void Promise.all([load(), master.refresh(), loadStocktakes()])
+})
+
+onActivated(() => {
+  applyInventoryRouteQuery()
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void Promise.all([load(), master.refresh(), loadStocktakes()])
+  }
 })
 </script>
 

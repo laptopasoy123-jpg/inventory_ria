@@ -6,6 +6,7 @@ defineProps<{
   value: string | number
   hint: string
   tone?: 'teal' | 'blue' | 'amber' | 'red' | 'violet'
+  valueTone?: 'default' | 'teal' | 'amber' | 'red'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   icon: any
   flaticonIcon?: string
@@ -33,7 +34,7 @@ defineEmits<{ click: [] }>()
       <span v-else class="stat-dot unified" />
     </div>
     <p>{{ label }}</p>
-    <strong>{{ value }}</strong>
+    <strong :class="valueTone && valueTone !== 'default' ? `stat-val-${valueTone}` : undefined">{{ value }}</strong>
     <small>{{ hint }}</small>
   </article>
 </template>

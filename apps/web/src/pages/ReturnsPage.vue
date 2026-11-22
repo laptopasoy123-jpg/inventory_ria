@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { AlertTriangle, ArrowUpDown, CheckCircle2, Edit3, PackageCheck, Plus, Search, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
-import { api, formatDate, formatNumber, generateUuid, uploadAttachment, variantLabel } from '@/lib/api'
+import { api, formatDate, formatNumber, generateUuid, getApiCacheVersion, uploadAttachment, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
@@ -301,8 +301,16 @@ function resultBadge(r: string) {
   return { label: 'Dikembalikan', cls: 'safe', effect: 'Masuk stok tersedia (Bekas Layak)' }
 }
 
-onMounted(async () => {
-  await Promise.all([load(), master.refresh()])
+let lastCacheVer = -1
+onMounted(() => {
+  lastCacheVer = getApiCacheVersion()
+  void Promise.all([load(), master.refresh()])
+})
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void Promise.all([load(), master.refresh()])
+  }
 })
 </script>
 

@@ -26,13 +26,19 @@ export class ApiError extends Error {
 
 const getCache = new Map<string, { ts: number; data: unknown }>()
 const inFlightGets = new Map<string, Promise<unknown>>()
-const GET_CACHE_TTL_MS = 30_000
+const GET_CACHE_TTL_MS = 60_000
+let cacheVersion = 0
+
+export function getApiCacheVersion() {
+  return cacheVersion
+}
 
 const numberFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 })
 const currencyFmt = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const dateFmt = new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
 
 export function invalidateApiCache(prefix?: string) {
+  cacheVersion += 1
   if (!prefix) {
     getCache.clear()
     return
@@ -58,6 +64,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const existing = inFlightGets.get(path)
     if (existing) return existing as Promise<T>
   } else {
+    cacheVersion += 1
     getCache.clear()
   }
 

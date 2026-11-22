@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import {
   AlertTriangle, CheckCircle2, Edit3, Eye, History, PackageCheck, PackageMinus, Plus, Search, Trash2, UsersRound,
 } from '@lucide/vue'
@@ -7,7 +7,7 @@ import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, conditionLabel, formatDate, formatNumber, variantLabel } from '@/lib/api'
+import { api, conditionLabel, formatDate, formatNumber, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore, type Employee } from '@/stores/master'
 
@@ -410,7 +410,14 @@ async function deleteEmployee(emp: Employee) {
   }
 }
 
-onMounted(load)
+let lastCacheVer = -1
+onMounted(() => { lastCacheVer = getApiCacheVersion(); void load() })
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void load()
+  }
+})
 </script>
 
 <template>

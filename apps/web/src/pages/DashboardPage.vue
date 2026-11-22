@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertTriangle, ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes,
-  ClipboardCheck, ClipboardList, PackageCheck, PackageMinus, PackagePlus, PackageX, RefreshCw, ShoppingBag, Wallet,
+  CheckCircle2, ClipboardCheck, ClipboardList, PackageCheck, PackageMinus, PackagePlus, RefreshCw, ShoppingBag, Wallet,
 } from '@lucide/vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, conditionLabel, formatCurrency, formatDate, formatNumber, invalidateApiCache, prefetchApi, variantLabel } from '@/lib/api'
+import { api, conditionLabel, formatCurrency, formatDate, formatNumber, getApiCacheVersion, invalidateApiCache, prefetchApi, variantLabel } from '@/lib/api'
 import { flaticonAssets } from '@/lib/icons'
 import { useMasterStore } from '@/stores/master'
 
@@ -40,23 +40,7 @@ const recentMovements = ref<Array<{
   quantity_delta: number; balance_after: number; notes: string | null;
   item_variants?: { size: string; items?: { code?: string; name: string; unit: string } | null } | null
 }>>([])
-
-function movementLabel(t: string) {
-  const map: Record<string, string> = {
-    opening_stock: 'Stok Awal', receipt: 'Barang Masuk', issuance: 'Barang Keluar',
-    return: 'Pengembalian APD', stocktake_adjustment: 'Stok Opname', condition_transfer: 'Pindah Kondisi',
-  }
-  return map[t] || t
-}
-
-function movementIcon(t: string) {
-  if (t === 'receipt' || t === 'opening_stock') return PackagePlus
-  if (t === 'issuance') return PackageMinus
-  if (t === 'return') return PackageCheck
-  if (t === 'stocktake_adjustment') return ClipboardCheck
-  if (t === 'condition_transfer') return ArrowRightLeft
-  return Boxes
-}
+let lastCacheVer = -1
 
 // Drill-down History Modal state
 const historyOpen = ref(false)
@@ -74,16 +58,20 @@ const periodLabelText = computed(() => {
     return new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(now)
   }
   if (period.value === 'year') return `Tahun ${now.getFullYear()}`
-  return 'Semua periode'
+  return 'Semua waktu'
 })
 
 const unitOptions = computed(() => [
-  { value: 'all', label: 'Semua Satuan (All)' },
+  { value: 'all', label: 'Semua Satuan' },
   ...data.value.stockByUnit.map((e) => ({ value: e.unit, label: `Satuan: ${e.unit}` })),
 ])
 
 const totalStockAllUnits = computed(() =>
   data.value.stockByUnit.reduce((s, e) => s + Number(e.quantity || 0), 0),
+)
+
+const totalAttentionCount = computed(() =>
+  Number(data.value.lowStockTypes || 0) + Number(data.value.outStockTypes || 0),
 )
 
 const activeFlow = computed(() => {
@@ -122,6 +110,23 @@ const chartRows = computed(() => {
 
 const chartMax = computed(() => Math.max(1, ...chartRows.value.flatMap((row) => [Number(row.incoming), Number(row.outgoing)])))
 
+function movementLabel(t: string) {
+  const map: Record<string, string> = {
+    opening_stock: 'Stok Awal', receipt: 'Barang Masuk', issuance: 'Barang Keluar',
+    return: 'Pengembalian APD', stocktake_adjustment: 'Stok Opname', condition_transfer: 'Pindah Kondisi',
+  }
+  return map[t] || t
+}
+
+function movementIcon(t: string) {
+  if (t === 'receipt' || t === 'opening_stock') return PackagePlus
+  if (t === 'issuance') return PackageMinus
+  if (t === 'return') return PackageCheck
+  if (t === 'stocktake_adjustment') return ClipboardCheck
+  if (t === 'condition_transfer') return ArrowRightLeft
+  return Boxes
+}
+
 function matchesActivePeriod(dateStr?: string | null) {
   if (period.value === 'all' || !dateStr) return true
   const d = new Date(dateStr)
@@ -131,7 +136,7 @@ function matchesActivePeriod(dateStr?: string | null) {
 }
 
 async function openDashboardHistory(
-  kind: 'items' | 'incoming' | 'outgoing' | 'low' | 'out' | 'unpaid' | 'proc_detail' | 'item_movements',
+  kind: 'items' | 'incoming' | 'outgoing' | 'attention' | 'low' | 'out' | 'payments' | 'proc_detail' | 'item_movements',
   payload?: ActiveProc | Attention,
 ) {
   historyOpen.value = true
@@ -141,7 +146,7 @@ async function openDashboardHistory(
   historyActionTarget.value = null
 
   try {
-    if (kind === 'items' || kind === 'low' || kind === 'out') {
+    if (kind === 'items' || kind === 'attention' || kind === 'low' || kind === 'out') {
       const res = await api<{
         data: Array<{
           variant_id: string; code: string; name: string; size: string; unit: string;
@@ -151,27 +156,30 @@ async function openDashboardHistory(
       }>('/api/inventory?page=1&limit=200')
 
       const list = res.data.filter((item) => {
+        if (kind === 'attention') return item.stock_status === 'out' || item.stock_status === 'low'
         if (kind === 'low') return item.stock_status === 'low'
         if (kind === 'out') return item.stock_status === 'out'
         return true
       })
 
       historyTitle.value =
-        kind === 'low'
-          ? 'Riwayat & Daftar Stok Menipis'
-          : kind === 'out'
-            ? 'Riwayat & Daftar Stok Habis'
-            : 'Daftar Seluruh Jenis Barang APD'
+        kind === 'attention'
+          ? 'Barang Perlu Segera Dipesan (Habis & Menipis)'
+          : kind === 'low'
+            ? 'Daftar Stok Menipis'
+            : kind === 'out'
+              ? 'Daftar Stok Habis'
+              : 'Daftar Seluruh Jenis Barang APD'
       historySubtitle.value =
         kind === 'items'
-          ? 'Rincian saldo tersedia (Baru + Bekas Layak), karantina, dan rusak saat ini'
-          : 'Item yang berada di bawah atau sama dengan batas minimum stok'
-      historyEmpty.value = kind === 'items' ? 'Belum ada barang APD terdaftar.' : 'Tidak ada barang dalam kategori ini.'
+          ? 'Rincian stok siap pakai (Baru + Bekas Layak), karantina, dan rusak'
+          : 'Daftar barang yang sudah habis atau mendekati batas minimum'
+      historyEmpty.value = kind === 'items' ? 'Belum ada barang APD terdaftar.' : 'Semua stok saat ini aman!'
       historyActionLabel.value = 'Buka Stok Inventaris'
       historyActionTarget.value = { name: 'inventory', query: kind === 'items' ? undefined : { status: kind } }
       historyColumns.value = [
         { key: 'item', label: 'Barang APD' },
-        { key: 'available', label: 'Tersedia (Baru+Layak)' },
+        { key: 'available', label: 'Siap Pakai (Baru+Layak)' },
         { key: 'nonAvail', label: 'Karantina / Rusak' },
         { key: 'min', label: 'Min. Stok' },
         { key: 'status', label: 'Status' },
@@ -244,7 +252,7 @@ async function openDashboardHistory(
         { key: 'date', label: 'Tanggal' },
         { key: 'doc', label: 'No. Dokumen & Sumber' },
         { key: 'item', label: 'Barang & Kondisi' },
-        { key: 'qty', label: 'Jumlah Masuk' },
+        { key: 'qty', label: 'Masuk' },
         { key: 'note', label: 'Keterangan' },
       ]
       historyRows.value = rows
@@ -288,7 +296,7 @@ async function openDashboardHistory(
         { key: 'purpose', label: 'Keperluan' },
       ]
       historyRows.value = rows
-    } else if (kind === 'unpaid') {
+    } else if (kind === 'payments') {
       const res = await api<{
         data: Array<{
           procurement_no: string; po_number: string | null; procurement_date: string; status: string;
@@ -298,8 +306,8 @@ async function openDashboardHistory(
       }>('/api/procurements')
       const recorded = res.data.filter((p) => p.status !== 'cancelled' && Number(p.total_amount || 0) > 0)
 
-      historyTitle.value = 'History Pembayaran (Nominal Pengadaan Tercatat)'
-      historySubtitle.value = `${recorded.length} dokumen pengadaan dengan total nominal ${formatCurrency(recorded.reduce((s, p) => s + Number(p.total_amount || 0), 0))}`
+      historyTitle.value = 'History Pembayaran (Total Belanja Tercatat)'
+      historySubtitle.value = `${recorded.length} pengadaan bernominal · Total ${formatCurrency(recorded.reduce((s, p) => s + Number(p.total_amount || 0), 0))}`
       historyEmpty.value = 'Belum ada nominal pengadaan yang tercatat.'
       historyActionLabel.value = 'Buka History Pembayaran'
       historyActionTarget.value = { name: 'payments' }
@@ -333,7 +341,7 @@ async function openDashboardHistory(
       historyColumns.value = [
         { key: 'item', label: 'Barang Dipesan' },
         { key: 'ordered', label: 'Dipesan' },
-        { key: 'received', label: 'Sudah Diterima' },
+        { key: 'received', label: 'Sudah Masuk' },
         { key: 'remaining', label: 'Sisa Belum Datang' },
         { key: 'price', label: 'Harga Satuan' },
       ]
@@ -352,18 +360,14 @@ async function openDashboardHistory(
       const res = await api<{
         data: Array<{ occurred_at: string; movement_type: string; condition: string; quantity_delta: number; balance_after: number; notes: string | null }>
       }>(`/api/inventory/movements/${payload.variant_id}`)
-      const typeMap: Record<string, string> = {
-        opening_stock: 'Stok Awal', receipt: 'Barang Masuk', issuance: 'Barang Keluar',
-        return: 'Pengembalian APD', stocktake_adjustment: 'Penyesuaian Opname', condition_transfer: 'Pindah Kondisi',
-      }
       historyTitle.value = `Riwayat Mutasi — ${variantLabel(payload)}`
-      historySubtitle.value = `Kode ${payload.code} · Tersedia ${formatNumber(payload.total_available)} ${payload.unit} (Min. ${formatNumber(payload.minimum_stock)} ${payload.unit})`
+      historySubtitle.value = `Kode ${payload.code} · Sisa ${formatNumber(payload.total_available)} ${payload.unit} (Min. ${formatNumber(payload.minimum_stock)} ${payload.unit})`
       historyEmpty.value = 'Belum ada riwayat mutasi untuk item ini.'
       historyActionLabel.value = 'Buka Stok Inventaris'
       historyActionTarget.value = { name: 'inventory', query: { status: payload.stock_status } }
       historyColumns.value = [
         { key: 'date', label: 'Tanggal' },
-        { key: 'type', label: 'Jenis Mutasi' },
+        { key: 'type', label: 'Aktivitas' },
         { key: 'cond', label: 'Kondisi' },
         { key: 'delta', label: 'Perubahan' },
         { key: 'after', label: 'Stok Akhir' },
@@ -371,7 +375,7 @@ async function openDashboardHistory(
       ]
       historyRows.value = res.data.map((m) => ({
         date: formatDate(m.occurred_at),
-        type: { text: typeMap[m.movement_type] || m.movement_type, strong: true },
+        type: { text: movementLabel(m.movement_type), strong: true },
         cond: conditionLabel(m.condition),
         delta: { text: `${Number(m.quantity_delta) > 0 ? '+' : ''}${formatNumber(m.quantity_delta)} ${payload.unit}`, pill: Number(m.quantity_delta) >= 0 ? 'plus' : 'minus' },
         after: `${formatNumber(m.balance_after)} ${payload.unit}`,
@@ -393,7 +397,7 @@ function goHistoryTarget() {
 
 async function load(force = false) {
   if (force) invalidateApiCache()
-  loading.value = true
+  if (!data.value.itemTypes && !force) loading.value = true
   error.value = ''
   try {
     const m = now.getMonth() + 1
@@ -401,13 +405,14 @@ async function load(force = false) {
     const [response, procRes, movRes] = await Promise.all([
       api<{ data: Dashboard }>(`/api/dashboard?period=${period.value}&month=${m}&year=${y}`),
       api<{ data: Array<{ status: string; total_amount: number }> }>('/api/procurements').catch(() => ({ data: [] })),
-      api<{ data: typeof recentMovements.value }>('/api/inventory/movements?limit=8').catch(() => ({ data: [] })),
+      api<{ data: typeof recentMovements.value }>('/api/inventory/movements?limit=6').catch(() => ({ data: [] })),
     ])
     data.value = response.data
     totalRecordedNominal.value = procRes.data
       .filter((p) => p.status !== 'cancelled')
       .reduce((s, p) => s + Number(p.total_amount || 0), 0)
     recentMovements.value = movRes.data
+    lastCacheVer = getApiCacheVersion()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Dashboard tidak dapat dimuat'
   } finally {
@@ -438,6 +443,9 @@ onMounted(() => {
   void load()
   master.refresh().catch(() => {})
 })
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) void load()
+})
 watch(period, () => void load())
 </script>
 
@@ -445,9 +453,9 @@ watch(period, () => void load())
   <div class="dashboard-page">
     <section class="page-intro">
       <div>
-        <p class="eyebrow">Ringkasan operasional</p>
-        <h2>Selamat datang kembali</h2>
-        <p>Pantau stok APD, pengadaan berjalan, penerimaan barang, dan tanggungan karyawan secara real-time.</p>
+        <p class="eyebrow">Ringkasan Gudang APD</p>
+        <h2>Halo, ini kondisi gudang hari ini</h2>
+        <p>Semua angka bisa langsung diklik untuk melihat rincian &amp; riwayat datanya.</p>
       </div>
       <div class="filter-group">
         <div class="period-pills" role="group" aria-label="Filter periode dashboard">
@@ -459,12 +467,30 @@ watch(period, () => void load())
       </div>
     </section>
 
+    <!-- Plain-Language One-Line Warehouse Health Summary -->
+    <section class="dash-digest-banner" :class="{ warn: totalAttentionCount > 0 }">
+      <div class="dash-digest-left">
+        <AlertTriangle v-if="totalAttentionCount > 0" :size="18" />
+        <CheckCircle2 v-else :size="18" />
+        <p v-if="totalAttentionCount > 0">
+          Ada <strong>{{ data.outStockTypes }} barang habis</strong> dan <strong>{{ data.lowStockTypes }} menipis</strong> yang perlu segera dipesan.
+          Total siap pakai saat ini <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> ({{ data.itemTypes }} jenis barang).
+        </p>
+        <p v-else>
+          Semua stok aman! Tersedia <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> siap pakai dari <strong>{{ data.itemTypes }} jenis barang</strong>.
+        </p>
+      </div>
+      <button v-if="totalAttentionCount > 0" type="button" class="secondary-button xs" @click="openDashboardHistory('attention')">
+        Lihat {{ totalAttentionCount }} Barang →
+      </button>
+    </section>
+
     <section class="quick-actions-bar">
       <button class="quick-chip" @mouseenter="prefetchRoute('inventory')" @click="router.push({ name: 'inventory', query: { action: 'opening-stock' } })">
         <ClipboardList :size="16" /> Input Stok Awal
       </button>
       <button class="quick-chip" @mouseenter="prefetchRoute('procurements')" @click="router.push({ name: 'procurements', query: { action: 'new' } })">
-        <ShoppingBag :size="16" /> Buat Pengadaan Barang
+        <ShoppingBag :size="16" /> Buat Pengadaan
       </button>
       <button class="quick-chip" @mouseenter="prefetchRoute('receipts')" @click="router.push({ name: 'receipts', query: { action: 'new' } })">
         <PackagePlus :size="16" /> Catat Barang Masuk
@@ -476,51 +502,46 @@ watch(period, () => void load())
 
     <div v-if="error" class="inline-alert"><AlertTriangle :size="18" />{{ error }}<button @click="load(true)">Coba lagi</button></div>
 
-    <section class="stats-grid">
+    <!-- 4 Big, Spacious, Easy-to-Read KPI Cards -->
+    <section class="stats-grid stats-grid-4">
       <StatCard
-        label="Jenis barang"
-        :value="data.itemTypes"
-        hint="Klik lihat daftar barang"
+        label="Stok Siap Pakai"
+        :value="`${formatNumber(totalStockAllUnits)} unit`"
+        :hint="`${data.itemTypes} jenis barang · Klik lihat daftar`"
+        value-tone="teal"
         :icon="Boxes"
         :flaticon-icon="flaticonAssets.warehouse"
         clickable
         @click="openDashboardHistory('items')"
       />
       <StatCard
-        label="Barang masuk"
-        :value="`${formatNumber(activeFlow.incoming)} ${activeFlow.unit}`"
-        :hint="`Riwayat · ${periodLabelText}`"
+        label="Total Barang Masuk"
+        :value="`+${formatNumber(activeFlow.incoming)} ${activeFlow.unit}`"
+        :hint="`Periode: ${periodLabelText} · Klik riwayat`"
+        value-tone="teal"
         :icon="ArrowDownToLine"
         :flaticon-icon="flaticonAssets.box"
         clickable
         @click="openDashboardHistory('incoming')"
       />
       <StatCard
-        label="Barang keluar"
-        :value="`${formatNumber(activeFlow.outgoing)} ${activeFlow.unit}`"
-        :hint="`Riwayat · ${periodLabelText}`"
+        label="Total Barang Keluar"
+        :value="`-${formatNumber(activeFlow.outgoing)} ${activeFlow.unit}`"
+        :hint="`Periode: ${periodLabelText} · Klik riwayat`"
         :icon="ArrowUpFromLine"
         :flaticon-icon="flaticonAssets.shield"
         clickable
         @click="openDashboardHistory('outgoing')"
       />
       <StatCard
-        label="Stok menipis"
-        :value="data.lowStockTypes"
-        hint="Klik lihat daftar menipis"
+        label="Perlu Segera Dipesan"
+        :value="`${totalAttentionCount} barang`"
+        :hint="`${data.outStockTypes} habis · ${data.lowStockTypes} menipis · Klik lihat`"
+        :value-tone="data.outStockTypes > 0 ? 'red' : data.lowStockTypes > 0 ? 'amber' : 'teal'"
         :icon="AlertTriangle"
         :flaticon-icon="flaticonAssets.warning"
         clickable
-        @click="openDashboardHistory('low')"
-      />
-      <StatCard
-        label="Stok habis"
-        :value="data.outStockTypes"
-        hint="Klik lihat daftar habis"
-        :icon="PackageX"
-        :flaticon-icon="flaticonAssets.quarantine"
-        clickable
-        @click="openDashboardHistory('out')"
+        @click="openDashboardHistory('attention')"
       />
     </section>
 
@@ -528,17 +549,21 @@ watch(period, () => void load())
       <article class="panel chart-panel">
         <div class="panel-header">
           <div>
-            <h3>Pergerakan stok {{ now.getFullYear() }}</h3>
-            <p>Barang masuk (termasuk stok awal) vs barang keluar per bulan ({{ selectedUnit === 'all' ? 'semua satuan digabung' : `satuan ${selectedUnit}` }})</p>
+            <h3>Grafik Masuk vs Keluar ({{ now.getFullYear() }})</h3>
+            <p>Perbandingan barang masuk dan keluar tiap bulan ({{ selectedUnit === 'all' ? 'semua satuan' : `satuan ${selectedUnit}` }})</p>
           </div>
           <ModernSelect v-model="selectedUnit" :options="unitOptions" compact :searchable="false" />
         </div>
-        <div class="chart-legend"><span><i class="incoming" />Masuk</span><span><i class="outgoing" />Keluar</span></div>
+        <div class="chart-legend"><span><i class="incoming" />Masuk (Hijau Tua)</span><span><i class="outgoing" />Keluar (Hijau Muda)</span></div>
         <div v-if="chartRows.length" class="bar-chart">
           <div v-for="row in chartRows" :key="row.month" class="bar-group">
             <div class="bars">
-              <span class="bar incoming" :style="{ height: `${Math.max(2, Number(row.incoming) / chartMax * 100)}%` }" :title="`Masuk ${row.incoming} ${row.unit}`" />
-              <span class="bar outgoing" :style="{ height: `${Math.max(2, Number(row.outgoing) / chartMax * 100)}%` }" :title="`Keluar ${row.outgoing} ${row.unit}`" />
+              <span class="bar incoming" :style="{ height: `${Math.max(2, Number(row.incoming) / chartMax * 100)}%` }" :title="`Masuk ${row.incoming} ${row.unit}`">
+                <em v-if="Number(row.incoming) > 0" class="bar-val">{{ formatNumber(row.incoming) }}</em>
+              </span>
+              <span class="bar outgoing" :style="{ height: `${Math.max(2, Number(row.outgoing) / chartMax * 100)}%` }" :title="`Keluar ${row.outgoing} ${row.unit}`">
+                <em v-if="Number(row.outgoing) > 0" class="bar-val">{{ formatNumber(row.outgoing) }}</em>
+              </span>
             </div>
             <small>{{ row.month }}</small>
           </div>
@@ -547,20 +572,23 @@ watch(period, () => void load())
       </article>
 
       <article class="panel stock-summary-panel">
-        <div class="panel-header"><div><h3>Stok tersedia</h3><p>Klik satuan atau pilih Semua</p></div><Boxes :size="20" /></div>
+        <div class="panel-header">
+          <div><h3>Rincian Stok per Satuan</h3><p>Klik satuan untuk filter grafik di sebelah</p></div>
+          <Boxes :size="20" />
+        </div>
         <div class="unit-list">
           <button :class="{ active: selectedUnit === 'all' }" @click="selectedUnit = 'all'">
-            <span>Semua Satuan (All)</span><strong>{{ formatNumber(totalStockAllUnits) }}</strong><small>gabungan semua satuan</small>
+            <span>Semua Satuan</span><strong>{{ formatNumber(totalStockAllUnits) }}</strong><small>Total gabungan siap pakai</small>
           </button>
           <button v-for="entry in data.stockByUnit" :key="entry.unit" :class="{ active: selectedUnit === entry.unit }" @click="selectedUnit = entry.unit">
-            <span>{{ entry.unit }}</span><strong>{{ formatNumber(entry.quantity) }}</strong><small>baru + bekas layak</small>
+            <span>{{ entry.unit }}</span><strong>{{ formatNumber(entry.quantity) }}</strong><small>Siap pakai (Baru + Layak)</small>
           </button>
           <div v-if="!data.stockByUnit.length" class="empty-state compact">Belum ada saldo stok.</div>
         </div>
-        <button type="button" class="purchase-strip clickable-strip" @click="openDashboardHistory('unpaid')">
+        <button type="button" class="purchase-strip clickable-strip" @click="openDashboardHistory('payments')">
           <span><Wallet :size="18" /></span>
           <div>
-            <small>History Pembayaran · Total nominal pengadaan tercatat</small>
+            <small>Total Belanja Tercatat (History Pembayaran)</small>
             <strong>{{ formatCurrency(totalRecordedNominal) }}</strong>
           </div>
         </button>
@@ -570,8 +598,37 @@ watch(period, () => void load())
     <section class="dashboard-bottom-grid">
       <article class="panel attention-panel">
         <div class="panel-header">
-          <div><h3>Progress Pengadaan Berjalan</h3><p>Klik baris untuk lihat rincian kedatangan barang</p></div>
-          <RouterLink :to="{ name: 'procurements' }">Kelola pengadaan →</RouterLink>
+          <div><h3>Barang Habis &amp; Menipis</h3><p>Klik barang untuk lihat riwayat keluar/masuknya</p></div>
+          <RouterLink :to="{ name: 'inventory', query: { status: 'attention' } }">Semua stok →</RouterLink>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nama Barang</th><th>Sisa Stok</th><th>Minimal</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr v-for="item in data.attentionItems" :key="item.variant_id" class="clickable-tr" @click="openDashboardHistory('item_movements', item)">
+                <td>
+                  <span class="item-cell">
+                    <i>{{ item.name.slice(0, 2).toUpperCase() }}</i>
+                    <span>
+                      <strong>{{ variantLabel(item) }}</strong>
+                      <small>{{ item.code }}</small>
+                    </span>
+                  </span>
+                </td>
+                <td><strong :class="item.stock_status === 'out' ? 'text-red' : 'text-amber'">{{ formatNumber(item.total_available) }} {{ item.unit }}</strong></td>
+                <td>{{ formatNumber(item.minimum_stock) }} {{ item.unit }}</td>
+                <td><span class="status-pill" :class="item.stock_status">{{ item.stock_status === 'out' ? 'Habis' : 'Menipis' }}</span></td>
+              </tr>
+              <tr v-if="!data.attentionItems.length"><td colspan="4"><div class="empty-state compact">Semua stok berada dalam batas aman.</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel attention-panel">
+        <div class="panel-header">
+          <div><h3>Pengadaan Sedang Berjalan</h3><p>Barang yang sudah dipesan dan ditunggu kedatangannya</p></div>
+          <RouterLink :to="{ name: 'procurements' }">Kelola PO →</RouterLink>
         </div>
         <div class="proc-mini-list">
           <button
@@ -583,49 +640,27 @@ watch(period, () => void load())
           >
             <div>
               <strong>{{ proc.procurement_no }} <span v-if="proc.po_number" class="tag-pill">PO: {{ proc.po_number }}</span></strong>
-              <small>{{ proc.supplier_name }} · {{ formatNumber(proc.total_received) }} / {{ formatNumber(proc.total_ordered) }} unit</small>
+              <small>{{ proc.supplier_name }} · Masuk {{ formatNumber(proc.total_received) }} dari {{ formatNumber(proc.total_ordered) }} unit</small>
             </div>
             <div class="proc-mini-bar">
               <div class="progress-track"><div class="progress-fill" :style="{ width: `${proc.progress_percent}%` }" /></div>
               <span>{{ proc.progress_percent }}%</span>
             </div>
           </button>
-          <div v-if="!data.activeProcurements?.length" class="empty-state compact">Tidak ada pengadaan yang sedang menunggu barang.</div>
-        </div>
-      </article>
-
-      <article class="panel attention-panel">
-        <div class="panel-header">
-          <div><h3>Stok yang perlu perhatian</h3><p>Klik barang untuk melihat riwayat mutasi stok</p></div>
-          <RouterLink :to="{ name: 'inventory', query: { status: 'attention' } }">Lihat seluruh stok →</RouterLink>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Barang</th><th>Ukuran</th><th>Tersedia</th><th>Min</th><th>Status</th></tr></thead>
-            <tbody>
-              <tr v-for="item in data.attentionItems" :key="item.variant_id" class="clickable-tr" @click="openDashboardHistory('item_movements', item)">
-                <td><span class="item-cell"><i>{{ item.name.slice(0, 2).toUpperCase() }}</i><span><strong>{{ item.name }}</strong><small>{{ item.code }}</small></span></span></td>
-                <td>{{ item.size && item.size !== '-' ? item.size : 'Standar' }}</td>
-                <td><strong>{{ formatNumber(item.total_available) }}</strong> {{ item.unit }}</td>
-                <td>{{ formatNumber(item.minimum_stock) }} {{ item.unit }}</td>
-                <td><span class="status-pill" :class="item.stock_status">{{ item.stock_status === 'out' ? 'Habis' : 'Menipis' }}</span></td>
-              </tr>
-              <tr v-if="!data.attentionItems.length"><td colspan="5"><div class="empty-state compact">Semua stok berada dalam batas aman.</div></td></tr>
-            </tbody>
-          </table>
+          <div v-if="!data.activeProcurements?.length" class="empty-state compact">Tidak ada pengadaan yang sedang menunggu kedatangan barang.</div>
         </div>
       </article>
     </section>
 
-    <section class="panel" style="margin-top:20px;">
+    <section class="panel" style="margin-top:16px;padding:18px 20px;">
       <div class="panel-header">
         <div>
           <h3>Pergerakan &amp; Aktivitas Terbaru</h3>
-          <p>8 mutasi stok terakhir di gudang secara real-time</p>
+          <p>6 aktivitas keluar/masuk stok terakhir di gudang</p>
         </div>
         <RouterLink :to="{ name: 'reports' }">Lihat semua di Laporan →</RouterLink>
       </div>
-      <ul v-if="recentMovements.length" class="activity-feed-list compact">
+      <ul v-if="recentMovements.length" class="activity-feed-list compact" style="margin-top:12px;">
         <li v-for="m in recentMovements" :key="m.id" class="activity-feed-item">
           <span class="activity-feed-icon">
             <component :is="movementIcon(m.movement_type)" :size="16" />
