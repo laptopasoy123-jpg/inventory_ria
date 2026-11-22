@@ -483,6 +483,11 @@ onMounted(() => {
   if (['safe', 'low', 'out', 'attention', 'quarantine_damaged'].includes(qs)) {
     status.value = qs
   }
+  const qSearch = String(route.query.search || '').trim()
+  if (qSearch) {
+    search.value = qSearch
+    debouncedSearch.value = qSearch
+  }
   if (route.query.action === 'opening-stock') {
     void openOpeningStockModal()
   }

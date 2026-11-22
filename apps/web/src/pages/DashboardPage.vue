@@ -2,8 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Boxes,
-  ClipboardList, PackageMinus, PackagePlus, PackageX, RefreshCw, ShoppingBag, Wallet,
+  AlertTriangle, ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes,
+  ClipboardCheck, ClipboardList, PackageCheck, PackageMinus, PackagePlus, PackageX, RefreshCw, ShoppingBag, Wallet,
 } from '@lucide/vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -35,6 +35,28 @@ const data = ref<Dashboard>({
   periodFlow: [], monthlyFlow: [], attentionItems: [], activeProcurements: [], activeProcurementCount: 0, pendingPaymentAmount: 0,
 })
 const totalRecordedNominal = ref(0)
+const recentMovements = ref<Array<{
+  id: number; occurred_at: string; movement_type: string; condition: string;
+  quantity_delta: number; balance_after: number; notes: string | null;
+  item_variants?: { size: string; items?: { code?: string; name: string; unit: string } | null } | null
+}>>([])
+
+function movementLabel(t: string) {
+  const map: Record<string, string> = {
+    opening_stock: 'Stok Awal', receipt: 'Barang Masuk', issuance: 'Barang Keluar',
+    return: 'Pengembalian APD', stocktake_adjustment: 'Stok Opname', condition_transfer: 'Pindah Kondisi',
+  }
+  return map[t] || t
+}
+
+function movementIcon(t: string) {
+  if (t === 'receipt' || t === 'opening_stock') return PackagePlus
+  if (t === 'issuance') return PackageMinus
+  if (t === 'return') return PackageCheck
+  if (t === 'stocktake_adjustment') return ClipboardCheck
+  if (t === 'condition_transfer') return ArrowRightLeft
+  return Boxes
+}
 
 // Drill-down History Modal state
 const historyOpen = ref(false)
@@ -376,14 +398,16 @@ async function load(force = false) {
   try {
     const m = now.getMonth() + 1
     const y = now.getFullYear()
-    const [response, procRes] = await Promise.all([
+    const [response, procRes, movRes] = await Promise.all([
       api<{ data: Dashboard }>(`/api/dashboard?period=${period.value}&month=${m}&year=${y}`),
       api<{ data: Array<{ status: string; total_amount: number }> }>('/api/procurements').catch(() => ({ data: [] })),
+      api<{ data: typeof recentMovements.value }>('/api/inventory/movements?limit=8').catch(() => ({ data: [] })),
     ])
     data.value = response.data
     totalRecordedNominal.value = procRes.data
       .filter((p) => p.status !== 'cancelled')
       .reduce((s, p) => s + Number(p.total_amount || 0), 0)
+    recentMovements.value = movRes.data
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Dashboard tidak dapat dimuat'
   } finally {
@@ -591,6 +615,42 @@ watch(period, () => void load())
           </table>
         </div>
       </article>
+    </section>
+
+    <section class="panel" style="margin-top:20px;">
+      <div class="panel-header">
+        <div>
+          <h3>Pergerakan &amp; Aktivitas Terbaru</h3>
+          <p>8 mutasi stok terakhir di gudang secara real-time</p>
+        </div>
+        <RouterLink :to="{ name: 'reports' }">Lihat semua di Laporan →</RouterLink>
+      </div>
+      <ul v-if="recentMovements.length" class="activity-feed-list compact">
+        <li v-for="m in recentMovements" :key="m.id" class="activity-feed-item">
+          <span class="activity-feed-icon">
+            <component :is="movementIcon(m.movement_type)" :size="16" />
+          </span>
+          <div class="activity-feed-body">
+            <div class="activity-feed-top">
+              <strong>{{ variantLabel({ name: m.item_variants?.items?.name || 'Barang APD', size: m.item_variants?.size }) }}</strong>
+              <span class="tag-pill">{{ movementLabel(m.movement_type) }}</span>
+              <span class="tag-pill">{{ conditionLabel(m.condition) }}</span>
+            </div>
+            <p class="activity-feed-meta">
+              <span>{{ formatDate(m.occurred_at) }}</span>
+              <span v-if="m.notes" class="activity-feed-dot">·</span>
+              <span v-if="m.notes">{{ m.notes }}</span>
+            </p>
+          </div>
+          <div class="activity-feed-numbers">
+            <span class="delta-pill" :class="Number(m.quantity_delta) >= 0 ? 'plus' : 'minus'">
+              {{ Number(m.quantity_delta) >= 0 ? '+' : '' }}{{ formatNumber(m.quantity_delta) }} {{ m.item_variants?.items?.unit || '' }}
+            </span>
+            <small>Stok Akhir: <strong>{{ formatNumber(m.balance_after) }} {{ m.item_variants?.items?.unit || '' }}</strong></small>
+          </div>
+        </li>
+      </ul>
+      <div v-else class="empty-state compact">Belum ada aktivitas mutasi stok tercatat.</div>
     </section>
 
     <StatHistoryModal

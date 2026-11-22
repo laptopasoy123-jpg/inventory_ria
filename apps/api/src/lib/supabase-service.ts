@@ -262,6 +262,7 @@ export class SupabaseInventoryService implements InventoryService {
       .from('stock_movements')
       .select('*, item_variants(size, items(code, name, unit)), profiles(full_name)')
       .order('occurred_at', { ascending: false })
+      .order('id', { ascending: false })
       .limit(limit)
     if (variantId) query = query.eq('variant_id', variantId)
     const { data, error } = await query
