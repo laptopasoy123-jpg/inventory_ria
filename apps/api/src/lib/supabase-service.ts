@@ -43,7 +43,10 @@ export class SupabaseInventoryService implements InventoryService {
         .neq('payment_status', 'paid'),
     ])
     if (rpcRes.error) throw rpcRes.error
-    const pendingPaymentAmount = (unpaidRes.data ?? []).reduce((acc, row) => acc + Number(row.remaining_amount || 0), 0)
+    const pendingPaymentAmount = (unpaidRes.data ?? []).reduce(
+      (acc: number, row: Record<string, unknown>) => acc + Number(row.remaining_amount || 0),
+      0,
+    )
     return {
       ...(rpcRes.data as Record<string, unknown>),
       activeProcurements: procsRes.data ?? [],
@@ -287,7 +290,7 @@ export class SupabaseInventoryService implements InventoryService {
     if (error) throw error
     if (!procs?.length) return []
 
-    const ids = procs.map((p) => p.id)
+    const ids = procs.map((p: Record<string, unknown>) => String(p.id))
     const { data: items, error: itemErr } = await this.db
       .from('procurement_items')
       .select('*, item_variants(id, size, items(id, code, name, unit, photo_key))')
@@ -301,9 +304,9 @@ export class SupabaseInventoryService implements InventoryService {
       byProc.set(item.procurement_id, arr)
     }
 
-    let result = procs.map((p) => ({ ...p, items: byProc.get(p.id) ?? [] }))
+    let result = procs.map((p: Record<string, unknown>) => ({ ...p, items: byProc.get(String(p.id)) ?? [] }))
     if (variantId) {
-      result = result.filter((p) =>
+      result = result.filter((p: Record<string, unknown> & { items: Record<string, unknown>[] }) =>
         p.items.some((item: Record<string, unknown>) =>
           item.variant_id === variantId && Number(item.ordered_quantity) > Number(item.received_quantity),
         ),
@@ -432,7 +435,7 @@ export class SupabaseInventoryService implements InventoryService {
       .select('*, issuances!inner(id, transaction_no, issued_at, employee_id), item_variants(id, size, items(code, name, unit, return_required))')
       .eq('issuances.employee_id', employeeId)
     if (error) throw error
-    return (data ?? []).filter((row) => Number(row.quantity) - Number(row.returned_quantity) - Number(row.resolved_lost_quantity) > 0)
+    return (data ?? []).filter((row: Record<string, unknown>) => Number(row.quantity) - Number(row.returned_quantity) - Number(row.resolved_lost_quantity) > 0)
   }
 
   async createIssuance(input: IssuanceInput, idempotencyKey: string): Promise<string> {
@@ -464,7 +467,7 @@ export class SupabaseInventoryService implements InventoryService {
     const { data, error } = await query
     if (error) throw error
     if (!result || result === 'all') return data ?? []
-    return (data ?? []).filter((ret) =>
+    return (data ?? []).filter((ret: { return_items?: Array<{ result: string }> }) =>
       (ret.return_items ?? []).some((item: { result: string }) => item.result === result),
     )
   }
@@ -542,6 +545,6 @@ export class SupabaseInventoryService implements InventoryService {
       .from('issuance_items')
       .select('*, issuances(transaction_no, issued_at, employees(id, nik, name, position, departments(name))), item_variants(size, items(code, name, unit, return_required))')
     if (error) throw error
-    return (data ?? []).filter((row) => Number(row.quantity) - Number(row.returned_quantity) - Number(row.resolved_lost_quantity) > 0)
+    return (data ?? []).filter((row: Record<string, unknown>) => Number(row.quantity) - Number(row.returned_quantity) - Number(row.resolved_lost_quantity) > 0)
   }
 }
