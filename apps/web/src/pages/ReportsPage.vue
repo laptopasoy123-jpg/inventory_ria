@@ -145,7 +145,7 @@ function buildCheckedPdfSections(): PdfSectionTable[] {
     sections.push({
       title: '2. Mutasi Stok & Arus APD',
       subtitle: `Menampilkan ${filteredMovements.value.length} aktivitas mutasi`,
-      headers: ['Tanggal', 'Nama Barang', 'Jenis Mutasi', 'Kondisi', 'Perubahan', 'Saldo Akhir', 'Keterangan'],
+      headers: ['Tanggal', 'Nama Barang', 'Jenis Mutasi', 'Kondisi', 'Perubahan', 'Stok Akhir', 'Keterangan'],
       rows: filteredMovements.value.map((m) => [
         formatDate(m.occurred_at),
         variantLabel({ name: m.item_variants?.items?.name || '-', size: m.item_variants?.size }),
@@ -275,7 +275,7 @@ function exportActiveCsv() {
     downloadCsv(`laporan-stok-${d}.csv`, ['Kode', 'Nama', 'Ukuran', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Tersedia'],
       master.variants.map(v => [v.code, v.name, v.size, v.stock_new, v.stock_used_good, v.stock_quarantine, v.stock_damaged, v.total_available]))
   } else if (activeTab.value === 'movements') {
-    downloadCsv(`laporan-mutasi-${d}.csv`, ['Tanggal', 'Barang', 'Ukuran', 'Jenis', 'Kondisi', 'Perubahan', 'Saldo Akhir', 'Keterangan'],
+    downloadCsv(`laporan-mutasi-${d}.csv`, ['Tanggal', 'Barang', 'Ukuran', 'Jenis', 'Kondisi', 'Perubahan', 'Stok Akhir', 'Keterangan'],
       filteredMovements.value.map(m => [m.occurred_at.slice(0, 10), m.item_variants?.items?.name, m.item_variants?.size, movementName(m.movement_type), conditionLabel(m.condition), m.quantity_delta, m.balance_after, m.notes]))
   } else if (activeTab.value === 'procurements') {
     downloadCsv(`laporan-pengadaan-${d}.csv`, ['No Pengadaan', 'Tanggal', 'PO', 'Supplier', 'Dipesan', 'Diterima', 'Progress %', 'Total Tagihan', 'Terbayar', 'Status Bayar'],
@@ -396,7 +396,7 @@ onMounted(loadAll)
 
       <div v-else-if="activeTab === 'movements'" class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Saldo Akhir</th><th>Catatan</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Akhir</th><th>Catatan</th></tr></thead>
           <tbody>
             <tr v-for="m in filteredMovements" :key="m.id">
               <td>{{ formatDate(m.occurred_at) }}</td>

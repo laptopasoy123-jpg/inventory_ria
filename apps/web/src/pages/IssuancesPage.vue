@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertTriangle, Edit3, PackageMinus, Plus, Search, Trash2, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, Edit3, PackageMinus, Plus, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -45,15 +45,22 @@ const form = reactive({
 
 const editingRow = computed(() => rows.value.find((r) => r.id === editingId.value) || null)
 
+const sortDir = ref<'desc' | 'asc'>('desc')
+
 const filtered = computed(() => {
-  if (!search.value.trim()) return rows.value
-  const q = search.value.toLowerCase()
-  return rows.value.filter((r) =>
-    r.transaction_no.toLowerCase().includes(q) ||
-    r.officer_name.toLowerCase().includes(q) ||
-    (r.employees?.name || '').toLowerCase().includes(q) ||
-    (r.employees?.nik || '').toLowerCase().includes(q),
-  )
+  const q = search.value.trim().toLowerCase()
+  const list = !q
+    ? rows.value
+    : rows.value.filter((r) =>
+        r.transaction_no.toLowerCase().includes(q) ||
+        r.officer_name.toLowerCase().includes(q) ||
+        (r.employees?.name || '').toLowerCase().includes(q) ||
+        (r.employees?.nik || '').toLowerCase().includes(q),
+      )
+  return [...list].sort((a, b) => {
+    const cmp = a.transaction_no.localeCompare(b.transaction_no, undefined, { numeric: true })
+    return sortDir.value === 'asc' ? cmp : -cmp
+  })
 })
 
 const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
@@ -212,9 +219,9 @@ async function submit() {
   }
 }
 
-onMounted(async () => {
-  await Promise.all([load(), master.refresh()])
-  if (route.query.action === 'new') openModal()
+onMounted(() => {
+  if (route.query.action === 'new') void openModal()
+  void Promise.all([load(), master.refresh()])
 })
 </script>
 
@@ -237,7 +244,16 @@ onMounted(async () => {
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>No. Transaksi</th><th>Penerima (Karyawan)</th><th>Barang Dikeluarkan</th><th>Status Tanggungan</th><th>Petugas</th><th>Aksi</th></tr></thead>
+          <thead>
+            <tr>
+              <th>
+                <button type="button" class="th-sort-btn" @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'">
+                  No. Transaksi <ArrowUpDown :size="13" /> <span>{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>Penerima (Karyawan)</th><th>Barang Dikeluarkan</th><th>Status Tanggungan</th><th>Petugas</th><th>Aksi</th>
+            </tr>
+          </thead>
           <tbody>
             <tr v-for="row in pagedRows" :key="row.id">
               <td><strong>{{ row.transaction_no }}</strong><small class="table-sub">{{ formatDate(row.issued_at) }}</small></td>

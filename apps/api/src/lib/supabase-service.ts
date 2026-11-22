@@ -27,8 +27,8 @@ export class SupabaseInventoryService implements InventoryService {
     return data?.id ?? null
   }
 
-  async getDashboard(month: number, year: number): Promise<Record<string, unknown>> {
-    const [rpcRes, procsRes, unpaidRes] = await Promise.all([
+  async getDashboard(month: number, year: number, period: 'all' | 'year' | 'month' = 'all'): Promise<Record<string, unknown>> {
+    const [rpcRes, procsRes, unpaidRes, movRes] = await Promise.all([
       this.db.rpc('dashboard_summary', { p_month: month, p_year: year }),
       this.db
         .from('procurement_progress_view')
@@ -41,14 +41,49 @@ export class SupabaseInventoryService implements InventoryService {
         .select('remaining_amount')
         .neq('status', 'cancelled')
         .neq('payment_status', 'paid'),
+      period !== 'month'
+        ? this.db
+            .from('stock_movements')
+            .select('quantity_delta, movement_type, occurred_at, item_variants(items(unit))')
+            .in('movement_type', ['opening_stock', 'receipt', 'issuance'])
+            .limit(5000)
+        : Promise.resolve({ data: null, error: null }),
     ])
     if (rpcRes.error) throw rpcRes.error
+    const baseData = (rpcRes.data as Record<string, unknown>) || {}
     const pendingPaymentAmount = (unpaidRes.data ?? []).reduce(
       (acc: number, row: Record<string, unknown>) => acc + Number(row.remaining_amount || 0),
       0,
     )
+
+    let periodFlow = baseData.periodFlow as Array<{ unit: string; incoming: number; outgoing: number }> | undefined
+    if (period !== 'month' && Array.isArray(movRes.data)) {
+      const flowMap = new Map<string, { unit: string; incoming: number; outgoing: number }>()
+      const yearPrefix = `${year}-`
+      for (const sm of movRes.data as Array<{
+        quantity_delta: number
+        movement_type: string
+        occurred_at: string
+        item_variants?: { items?: { unit?: string } | null } | null
+      }>) {
+        if (period === 'year' && !String(sm.occurred_at || '').startsWith(yearPrefix)) continue
+        const unit = sm.item_variants?.items?.unit || 'pcs'
+        const cur = flowMap.get(unit) ?? { unit, incoming: 0, outgoing: 0 }
+        const delta = Number(sm.quantity_delta || 0)
+        if (delta > 0 && (sm.movement_type === 'receipt' || sm.movement_type === 'opening_stock')) {
+          cur.incoming += delta
+        } else if (delta < 0 && sm.movement_type === 'issuance') {
+          cur.outgoing += Math.abs(delta)
+        }
+        flowMap.set(unit, cur)
+      }
+      periodFlow = [...flowMap.values()].sort((a, b) => a.unit.localeCompare(b.unit))
+    }
+
     return {
-      ...(rpcRes.data as Record<string, unknown>),
+      ...baseData,
+      period,
+      periodFlow: periodFlow ?? [],
       activeProcurements: procsRes.data ?? [],
       activeProcurementCount: (procsRes.data ?? []).length,
       pendingPaymentAmount,
@@ -351,6 +386,16 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async updateProcurementStatus(id: string, status: string) {
+    if (status === 'cancelled') {
+      const { data: proc } = await this.db
+        .from('procurement_progress_view')
+        .select('total_received')
+        .eq('id', id)
+        .maybeSingle()
+      if (Number(proc?.total_received || 0) > 0) {
+        throw new Error('Pengadaan yang sudah memiliki barang masuk tidak dapat dibatalkan')
+      }
+    }
     const { error } = await this.db.from('procurements').update({ status }).eq('id', id)
     if (error) throw error
   }

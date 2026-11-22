@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Edit3, Plus, Search, Truck } from '@lucide/vue'
+import { ArrowUpDown, Edit3, Plus, Search, Truck } from '@lucide/vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal, { type EditablePurchase } from '@/components/ReceiptModal.vue'
 import { api, conditionLabel, formatDate, formatNumber } from '@/lib/api'
@@ -23,8 +23,10 @@ const page = ref(1)
 const showModal = ref(false)
 const editingRow = ref<EditablePurchase | null>(null)
 
+const sortDir = ref<'desc' | 'asc'>('desc')
+
 const filtered = computed(() => {
-  return rows.value.filter((r) => {
+  const list = rows.value.filter((r) => {
     if (filterSource.value === 'procurement' && !r.procurements) return false
     if (filterSource.value === 'direct' && r.procurements) return false
     if (!search.value.trim()) return true
@@ -35,6 +37,11 @@ const filtered = computed(() => {
       (r.po_number || '').toLowerCase().includes(q) ||
       (r.suppliers?.name || '').toLowerCase().includes(q)
     )
+  })
+  return [...list].sort((a, b) => {
+    const dateCmp = String(a.received_date || '').localeCompare(String(b.received_date || ''))
+    const cmp = dateCmp !== 0 ? dateCmp : a.transaction_no.localeCompare(b.transaction_no, undefined, { numeric: true })
+    return sortDir.value === 'asc' ? cmp : -cmp
   })
 })
 
@@ -80,9 +87,9 @@ async function load() {
   }
 }
 
-onMounted(async () => {
-  await load()
+onMounted(() => {
   if (route.query.action === 'new') openAdd()
+  void load()
 })
 </script>
 
@@ -110,7 +117,16 @@ onMounted(async () => {
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>No. Penerimaan</th><th>Referensi Pengadaan</th><th>Toko Online / Supplier</th><th>Item Masuk</th><th>Petugas Penerima</th><th>Aksi</th></tr></thead>
+          <thead>
+            <tr>
+              <th>
+                <button type="button" class="th-sort-btn" @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'">
+                  No. Penerimaan (Tgl) <ArrowUpDown :size="13" /> <span>{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>Referensi Pengadaan</th><th>Toko Online / Supplier</th><th>Item Masuk</th><th>Petugas Penerima</th><th>Aksi</th>
+            </tr>
+          </thead>
           <tbody>
             <tr v-for="row in pagedRows" :key="row.id">
               <td>

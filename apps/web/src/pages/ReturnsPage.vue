@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, Edit3, PackageCheck, Plus, Search, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, CheckCircle2, Edit3, PackageCheck, Plus, Search, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -59,13 +59,19 @@ const form = reactive({
   lines: [] as ReturnDraftLine[],
 })
 
+const sortDir = ref<'desc' | 'asc'>('desc')
+
 const filtered = computed(() => {
-  return rows.value.filter((r) => {
+  const list = rows.value.filter((r) => {
     if (filterResult.value === 'returned' && !r.return_items.some((it) => it.result !== 'lost')) return false
     if (filterResult.value === 'lost' && !r.return_items.some((it) => it.result === 'lost')) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
     return r.transaction_no.toLowerCase().includes(q) || (r.employees?.name || '').toLowerCase().includes(q) || r.inspector_name.toLowerCase().includes(q)
+  })
+  return [...list].sort((a, b) => {
+    const cmp = a.transaction_no.localeCompare(b.transaction_no, undefined, { numeric: true })
+    return sortDir.value === 'asc' ? cmp : -cmp
   })
 })
 
@@ -325,7 +331,16 @@ onMounted(async () => {
 
       <div class="table-wrap">
         <table>
-          <thead><tr><th>No. Pengembalian</th><th>Karyawan</th><th>APD Dikembalikan / Hilang</th><th>Status & Dampak Stok</th><th>Petugas</th><th>Aksi</th></tr></thead>
+          <thead>
+            <tr>
+              <th>
+                <button type="button" class="th-sort-btn" @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'">
+                  No. Pengembalian <ArrowUpDown :size="13" /> <span>{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>Karyawan</th><th>APD Dikembalikan / Hilang</th><th>Status &amp; Dampak Stok</th><th>Petugas</th><th>Aksi</th>
+            </tr>
+          </thead>
           <tbody>
             <tr v-for="row in pagedRows" :key="row.id">
               <td><strong>{{ row.transaction_no }}</strong><small class="table-sub">{{ formatDate(row.returned_at) }}</small></td>

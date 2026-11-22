@@ -9,6 +9,7 @@ import BaseModal from '@/components/BaseModal.vue'
 import ItemFormModal from '@/components/ItemFormModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
 import { api, attachmentUrl, conditionLabel, downloadCsv, formatDate, formatNumber, generateUuid, variantLabel } from '@/lib/api'
 import { flaticonAssets, itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
@@ -30,6 +31,15 @@ const master = useMasterStore()
 const toast = useToast()
 
 const rows = ref<StockRow[]>([])
+const stocktakes = ref<Array<{
+  id: string; stocktake_no: string; reference_at: string; officer_name: string; status: string;
+  stocktake_items: Array<{
+    id: string; condition: string; system_quantity: number; physical_quantity: number; reason: string | null;
+    item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null
+  }>
+}>>([])
+const activeInvTab = ref<'stock' | 'so'>('stock')
+const loadingSo = ref(false)
 const search = ref('')
 const debouncedSearch = ref('')
 const status = ref('all')
@@ -75,10 +85,133 @@ const transferForm = reactive({
 
 const filteredRows = computed(() => {
   return rows.value.filter((row) => {
+    if (status.value === 'attention') return row.stock_status === 'low' || row.stock_status === 'out'
+    if (status.value === 'quarantine_damaged') return Number(row.stock_quarantine || 0) > 0 || Number(row.stock_damaged || 0) > 0
     if (status.value !== 'all' && row.stock_status !== status.value) return false
     return true
   })
 })
+
+const flatSoItems = computed(() =>
+  stocktakes.value.flatMap((st) =>
+    (st.stocktake_items ?? []).map((it) => {
+      const diff = Number(it.physical_quantity) - Number(it.system_quantity)
+      return {
+        key: `${st.id}-${it.id}`,
+        stocktakeNo: st.stocktake_no,
+        referenceAt: st.reference_at,
+        officerName: st.officer_name,
+        status: st.status,
+        itemName: variantLabel({ name: it.item_variants?.items?.name || 'Barang', size: it.item_variants?.size }),
+        unit: it.item_variants?.items?.unit || 'unit',
+        condition: it.condition,
+        systemQty: Number(it.system_quantity),
+        physicalQty: Number(it.physical_quantity),
+        diff,
+        reason: it.reason || '-',
+      }
+    }),
+  ),
+)
+
+const soSurplusTotal = computed(() => flatSoItems.value.filter((x) => x.diff > 0).reduce((s, x) => s + x.diff, 0))
+const soMinusTotal = computed(() => flatSoItems.value.filter((x) => x.diff < 0).reduce((s, x) => s + Math.abs(x.diff), 0))
+
+async function loadStocktakes() {
+  loadingSo.value = true
+  try {
+    const res = await api<{ data: typeof stocktakes.value }>('/api/transactions/stocktakes')
+    stocktakes.value = res.data
+  } catch {
+    // non-fatal
+  } finally {
+    loadingSo.value = false
+  }
+}
+
+// Stat History Drill-down Modal
+const statModalOpen = ref(false)
+const statModalTitle = ref('')
+const statModalSubtitle = ref('')
+const statModalEmpty = ref('')
+const statModalColumns = ref<HistoryColumn[]>([])
+const statModalRows = ref<Array<Record<string, HistoryCell>>>([])
+
+function openStatHistory(kind: 'all' | 'safe' | 'attention' | 'quarantine_damaged') {
+  statModalOpen.value = true
+  if (kind === 'all') {
+    statModalTitle.value = 'Daftar Seluruh Item APD'
+    statModalSubtitle.value = `Total ${rows.value.length} varian terdaftar dalam sistem`
+    statModalEmpty.value = 'Belum ada item APD terdaftar.'
+    statModalColumns.value = [
+      { key: 'item', label: 'Barang APD' },
+      { key: 'category', label: 'Kategori' },
+      { key: 'available', label: 'Tersedia (Baru+Layak)' },
+      { key: 'nonAvail', label: 'Karantina / Rusak' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = rows.value.map((r) => ({
+      item: { text: variantLabel(r), sub: r.code, strong: true },
+      category: r.category_name,
+      available: { text: `${formatNumber(r.total_available)} ${r.unit}`, sub: `Baru ${formatNumber(r.stock_new)} · Layak ${formatNumber(r.stock_used_good)}`, strong: true },
+      nonAvail: `${formatNumber(r.stock_quarantine)} / ${formatNumber(r.stock_damaged)} ${r.unit}`,
+      status: { text: r.stock_status === 'safe' ? 'Aman' : r.stock_status === 'low' ? 'Menipis' : 'Habis', pill: r.stock_status },
+    }))
+  } else if (kind === 'safe') {
+    const list = rows.value.filter((r) => Number(r.total_available) > 0)
+    statModalTitle.value = 'Rincian Stok Siap Pakai (Tersedia)'
+    statModalSubtitle.value = `Hanya menghitung Baru + Bekas Layak (${formatNumber(totalAvailableUnits.value)} unit) — tidak termasuk Karantina & Rusak`
+    statModalEmpty.value = 'Belum ada stok tersedia.'
+    statModalColumns.value = [
+      { key: 'item', label: 'Barang APD' },
+      { key: 'newQty', label: 'Baru' },
+      { key: 'usedQty', label: 'Bekas Layak' },
+      { key: 'total', label: 'Total Tersedia' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = list.map((r) => ({
+      item: { text: variantLabel(r), sub: r.code, strong: true },
+      newQty: `${formatNumber(r.stock_new)} ${r.unit}`,
+      usedQty: `${formatNumber(r.stock_used_good)} ${r.unit}`,
+      total: { text: `${formatNumber(r.total_available)} ${r.unit}`, strong: true },
+      status: { text: r.stock_status === 'safe' ? 'Aman' : 'Menipis', pill: r.stock_status },
+    }))
+  } else if (kind === 'attention') {
+    const list = rows.value.filter((r) => r.stock_status === 'low' || r.stock_status === 'out')
+    statModalTitle.value = 'Daftar Item Menipis & Habis'
+    statModalSubtitle.value = 'Item dengan saldo tersedia <= batas minimum stok'
+    statModalEmpty.value = 'Semua stok berada dalam batas aman.'
+    statModalColumns.value = [
+      { key: 'item', label: 'Barang APD' },
+      { key: 'available', label: 'Tersedia' },
+      { key: 'min', label: 'Batas Minimum' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = list.map((r) => ({
+      item: { text: variantLabel(r), sub: r.code, strong: true },
+      available: { text: `${formatNumber(r.total_available)} ${r.unit}`, strong: true },
+      min: `${formatNumber(r.minimum_stock)} ${r.unit}`,
+      status: { text: r.stock_status === 'out' ? 'Habis' : 'Menipis', pill: r.stock_status },
+    }))
+  } else {
+    const list = rows.value.filter((r) => Number(r.stock_quarantine) > 0 || Number(r.stock_damaged) > 0)
+    statModalTitle.value = 'Riwayat & Daftar Stok Karantina & Rusak'
+    statModalSubtitle.value = 'Stok ini dipisahkan dan tidak dihitung dalam saldo tersedia'
+    statModalEmpty.value = 'Tidak ada barang di karantina atau rusak.'
+    statModalColumns.value = [
+      { key: 'item', label: 'Barang APD' },
+      { key: 'quarantine', label: 'Karantina' },
+      { key: 'damaged', label: 'Rusak (Afval)' },
+      { key: 'total', label: 'Total Non-Tersedia' },
+    ]
+    statModalRows.value = list.map((r) => ({
+      item: { text: variantLabel(r), sub: r.code, strong: true },
+      quarantine: { text: `${formatNumber(r.stock_quarantine)} ${r.unit}`, pill: Number(r.stock_quarantine) > 0 ? 'amber' : 'neutral' },
+      damaged: { text: `${formatNumber(r.stock_damaged)} ${r.unit}`, pill: Number(r.stock_damaged) > 0 ? 'out' : 'neutral' },
+      total: { text: `${formatNumber(Number(r.stock_quarantine) + Number(r.stock_damaged))} ${r.unit}`, strong: true },
+    }))
+  }
+}
 
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
 
@@ -100,9 +233,11 @@ const activeOfficers = computed(() => master.officers.filter((o) => o.active))
 
 const statusFilterOptions = [
   { value: 'all', label: 'Semua Status Stok' },
-  { value: 'safe', label: 'Aman', badge: 'Tersedia' },
-  { value: 'low', label: 'Menipis', badge: 'Perhatian' },
-  { value: 'out', label: 'Habis', badge: 'Kosong' },
+  { value: 'safe', label: 'Aman (Siap Pakai)', badge: 'Tersedia' },
+  { value: 'attention', label: 'Menipis & Habis', badge: 'Perhatian' },
+  { value: 'low', label: 'Menipis Saja', badge: 'Low' },
+  { value: 'out', label: 'Habis Saja', badge: 'Kosong' },
+  { value: 'quarantine_damaged', label: 'Ada Karantina / Rusak', badge: 'Non-Tersedia' },
 ]
 
 const officerOptions = computed(() =>
@@ -343,9 +478,15 @@ watch(search, (value) => {
 watch(status, () => { page.value = 1 })
 watch(debouncedSearch, load)
 
-onMounted(async () => {
-  await Promise.all([load(), master.refresh()])
-  if (route.query.action === 'opening-stock') openOpeningStockModal()
+onMounted(() => {
+  const qs = String(route.query.status || '')
+  if (['safe', 'low', 'out', 'attention', 'quarantine_damaged'].includes(qs)) {
+    status.value = qs
+  }
+  if (route.query.action === 'opening-stock') {
+    void openOpeningStockModal()
+  }
+  void Promise.all([load(), master.refresh(), loadStocktakes()])
 })
 </script>
 
@@ -383,54 +524,62 @@ onMounted(async () => {
     </section>
 
     <section class="inv-stats-grid">
-      <article class="inv-stat-card teal modern-hover-card">
+      <button type="button" class="inv-stat-card clickable modern-hover-card" @click="openStatHistory('all')">
         <div class="inv-stat-icon"><img :src="flaticonAssets.warehouse" alt="Item APD" /></div>
         <div>
           <span>Total Item APD</span>
           <strong>{{ total }}</strong>
-          <small>Terdaftar di gudang</small>
+          <small>Klik lihat daftar item</small>
         </div>
-      </article>
-      <article class="inv-stat-card blue modern-hover-card">
+      </button>
+      <button type="button" class="inv-stat-card clickable modern-hover-card" @click="openStatHistory('safe')">
         <div class="inv-stat-icon"><img :src="flaticonAssets.inventory" alt="Unit Tersedia" /></div>
         <div>
-          <span>Siap Pakai</span>
+          <span>Siap Pakai (Tersedia)</span>
           <strong>{{ formatNumber(totalAvailableUnits) }}</strong>
-          <small>Baru + Bekas Layak</small>
+          <small>Klik rincian Baru + Bekas Layak</small>
         </div>
-      </article>
-      <article class="inv-stat-card amber modern-hover-card">
+      </button>
+      <button type="button" class="inv-stat-card clickable modern-hover-card" @click="openStatHistory('attention')">
         <div class="inv-stat-icon"><img :src="flaticonAssets.warning" alt="Menipis / Habis" /></div>
         <div>
           <span>Menipis / Habis</span>
           <strong>{{ rows.filter(r => r.stock_status !== 'safe').length }}</strong>
           <small>{{ rows.filter(r => r.stock_status === 'out').length }} kosong · {{ rows.filter(r => r.stock_status === 'low').length }} menipis</small>
         </div>
-      </article>
-      <article class="inv-stat-card violet modern-hover-card">
+      </button>
+      <button type="button" class="inv-stat-card clickable modern-hover-card" @click="openStatHistory('quarantine_damaged')">
         <div class="inv-stat-icon"><img :src="flaticonAssets.quarantine" alt="Karantina & Rusak" /></div>
         <div>
           <span>Karantina &amp; Rusak</span>
           <strong>{{ formatNumber(totalQuarantineDamaged) }}</strong>
-          <small>Perlu inspeksi / afval</small>
+          <small>Tidak masuk stok tersedia</small>
         </div>
-      </article>
+      </button>
     </section>
 
     <section class="panel data-panel">
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="17" /><input v-model="search" placeholder="Cari kode atau nama barang APD..." /></label>
-        <ModernSelect v-model="status" :options="statusFilterOptions" compact :searchable="false" />
+      <div class="record-tabs">
+        <button :class="{ active: activeInvTab === 'stock' }" @click="activeInvTab = 'stock'">Saldo Stok APD ({{ filteredRows.length }})</button>
+        <button :class="{ active: activeInvTab === 'so' }" @click="activeInvTab = 'so'">
+          Laporan Selisih SO (+/-) ({{ flatSoItems.length }})
+        </button>
       </div>
 
-      <div class="table-wrap inventory-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Barang</th><th>Ukuran</th><th>Baru</th><th>Bekas layak</th>
-              <th>Karantina</th><th>Rusak</th><th>Total tersedia &amp; Level</th><th>Status</th><th>Aksi</th>
-            </tr>
-          </thead>
+      <template v-if="activeInvTab === 'stock'">
+        <div class="table-toolbar">
+          <label class="search-field"><Search :size="17" /><input v-model="search" placeholder="Cari kode atau nama barang APD..." /></label>
+          <ModernSelect v-model="status" :options="statusFilterOptions" compact :searchable="false" />
+        </div>
+
+        <div class="table-wrap inventory-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Barang</th><th>Ukuran</th><th>Baru</th><th>Bekas layak</th>
+                <th>Karantina</th><th>Rusak</th><th>Tersedia (Baru+Layak)</th><th>Status</th><th>Aksi</th>
+              </tr>
+            </thead>
           <tbody>
             <tr v-for="(row, rowIdx) in pagedRows" :key="row.variant_id" class="inv-row-animated" :style="{ animationDelay: `${rowIdx * 35}ms` }">
               <td>
@@ -481,9 +630,57 @@ onMounted(async () => {
             <tr v-if="loading"><td colspan="9"><div class="loading-row">Memuat saldo inventaris...</div></td></tr>
           </tbody>
         </table>
-      </div>
+        </div>
 
-      <PaginationBar v-model:page="page" :total-items="filteredRows.length" />
+        <PaginationBar v-model:page="page" :total-items="filteredRows.length" />
+      </template>
+
+      <template v-else>
+        <div class="table-toolbar" style="justify-content: space-between;">
+          <div class="tag-group">
+            <span class="tag-pill">Sesi SO: <b>{{ stocktakes.length }}</b></span>
+            <span class="delta-pill plus">Total Surplus: +{{ formatNumber(soSurplusTotal) }}</span>
+            <span class="delta-pill minus">Total Kurang / Hilang: -{{ formatNumber(soMinusTotal) }}</span>
+          </div>
+          <RouterLink :to="{ name: 'stocktakes' }" class="secondary-button xs">Buka Halaman Stok Opname →</RouterLink>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>No. &amp; Tanggal SO</th>
+                <th>Petugas</th>
+                <th>Nama Barang</th>
+                <th>Kondisi</th>
+                <th>Sistem</th>
+                <th>Fisik</th>
+                <th>Selisih (+/-)</th>
+                <th>Alasan / Catatan</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in flatSoItems" :key="item.key">
+                <td><strong>{{ item.stocktakeNo }}</strong><small class="table-sub">{{ formatDate(item.referenceAt) }}</small></td>
+                <td>{{ item.officerName }}</td>
+                <td><strong>{{ item.itemName }}</strong></td>
+                <td>{{ conditionLabel(item.condition) }}</td>
+                <td>{{ formatNumber(item.systemQty) }} {{ item.unit }}</td>
+                <td>{{ formatNumber(item.physicalQty) }} {{ item.unit }}</td>
+                <td>
+                  <span class="delta-pill" :class="item.diff > 0 ? 'plus' : item.diff < 0 ? 'minus' : 'zero'">
+                    {{ item.diff > 0 ? '+' : '' }}{{ formatNumber(item.diff) }}
+                  </span>
+                </td>
+                <td>{{ item.reason }}</td>
+              </tr>
+              <tr v-if="!loadingSo && !flatSoItems.length">
+                <td colspan="8"><div class="empty-state compact">Belum ada laporan selisih (+/-) dari Stok Opname.</div></td>
+              </tr>
+              <tr v-if="loadingSo"><td colspan="8"><div class="loading-row">Memuat laporan selisih Stok Opname...</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
     </section>
 
     <ItemFormModal :open="showItemModal" @close="showItemModal = false" @saved="load" />
@@ -571,7 +768,7 @@ onMounted(async () => {
       <div v-if="loadingHistory" class="loading-row">Memuat riwayat mutasi...</div>
       <div v-else class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Saldo Akhir</th><th>Keterangan</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Akhir</th><th>Keterangan</th></tr></thead>
           <tbody>
             <tr v-for="m in movements" :key="m.id">
               <td>{{ formatDate(m.occurred_at) }}</td>
@@ -620,5 +817,15 @@ onMounted(async () => {
         </button>
       </template>
     </BaseModal>
+
+    <StatHistoryModal
+      :open="statModalOpen"
+      :title="statModalTitle"
+      :subtitle="statModalSubtitle"
+      :columns="statModalColumns"
+      :rows="statModalRows"
+      :empty-text="statModalEmpty"
+      @close="statModalOpen = false"
+    />
   </div>
 </template>

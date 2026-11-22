@@ -37,8 +37,8 @@ const currentYear = new Date().getFullYear()
               class="toast-daysheet-link"
               title="Kunjungi situs resmi DaySheet.id"
             >
-              <img src="/daysheet-logo.png" alt="DaySheet.id" />
-              <span>Copyright &copy; {{ currentYear }} by <strong>DaySheet.id</strong></span>
+              <span class="toast-logo-chip"><img src="/daysheet-logo.png" alt="DaySheet.id" /></span>
+              <span>&copy; {{ currentYear }}</span>
               <ArrowUpRight :size="12" />
             </a>
             <span class="toast-status-tag">{{ t.type === 'success' ? 'Tercatat' : t.type === 'error' ? 'Gagal' : 'Info' }}</span>

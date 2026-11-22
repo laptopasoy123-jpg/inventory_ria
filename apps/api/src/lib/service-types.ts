@@ -40,7 +40,7 @@ export interface InventoryRow {
 }
 
 export interface InventoryService {
-  getDashboard(month: number, year: number): Promise<Record<string, unknown>>
+  getDashboard(month: number, year: number, period?: 'all' | 'year' | 'month'): Promise<Record<string, unknown>>
   getMasterSummary(): Promise<{
     categories: Record<string, unknown>[]
     departments: Record<string, unknown>[]

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
+import { ArrowUpDown, CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, Wallet, XCircle } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal from '@/components/ReceiptModal.vue'
 import PaymentModal, { type ProcurementPayItem } from '@/components/PaymentModal.vue'
+import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
 import { api, attachmentUrl, formatCurrency, formatDate, formatNumber, generateUuid, variantLabel } from '@/lib/api'
 import { itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
@@ -80,9 +81,13 @@ const receiptProcId = ref<string | null>(null)
 const showPaymentModal = ref(false)
 const paymentProcId = ref<string | null>(null)
 
+const sortDir = ref<'desc' | 'asc'>('desc')
+
 const filteredRows = computed(() => {
-  return rows.value.filter((r) => {
-    if (statusFilter.value !== 'all' && r.status !== statusFilter.value) return false
+  const list = rows.value.filter((r) => {
+    if (statusFilter.value === 'pending_progress' && !(r.status === 'ordered' || r.status === 'partial')) return false
+    else if (statusFilter.value === 'unpaid' && !(r.payment_status !== 'paid' && r.status !== 'cancelled')) return false
+    else if (statusFilter.value !== 'all' && statusFilter.value !== 'pending_progress' && statusFilter.value !== 'unpaid' && r.status !== statusFilter.value) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
     return (
@@ -92,6 +97,10 @@ const filteredRows = computed(() => {
       r.supplier_name.toLowerCase().includes(q) ||
       r.reason.toLowerCase().includes(q)
     )
+  })
+  return [...list].sort((a, b) => {
+    const cmp = a.procurement_no.localeCompare(b.procurement_no, undefined, { numeric: true })
+    return sortDir.value === 'asc' ? cmp : -cmp
   })
 })
 
@@ -309,6 +318,106 @@ function openPayFor(id: string) {
   showPaymentModal.value = true
 }
 
+// Stat History Drill-down Modal
+const statModalOpen = ref(false)
+const statModalTitle = ref('')
+const statModalSubtitle = ref('')
+const statModalEmpty = ref('')
+const statModalColumns = ref<HistoryColumn[]>([])
+const statModalRows = ref<Array<Record<string, HistoryCell>>>([])
+
+function openStatHistory(kind: 'all' | 'pending_progress' | 'unpaid') {
+  statModalOpen.value = true
+  if (kind === 'all') {
+    statModalTitle.value = 'Riwayat Semua Pengadaan Barang (PO)'
+    statModalSubtitle.value = `Total ${rows.value.length} dokumen pengadaan tercatat`
+    statModalEmpty.value = 'Belum ada data pengadaan barang.'
+    statModalColumns.value = [
+      { key: 'doc', label: 'Kode Pengadaan / PO' },
+      { key: 'supplier', label: 'Supplier / Toko' },
+      { key: 'progress', label: 'Progress Barang' },
+      { key: 'amount', label: 'Total Nilai' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = rows.value.map((r) => {
+      const sb = statusBadge(r.status)
+      return {
+        doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
+        supplier: r.supplier_name,
+        progress: `${formatNumber(r.total_received)} / ${formatNumber(r.total_ordered)} (${r.progress_percent}%)`,
+        amount: { text: formatCurrency(r.total_amount), sub: payBadge(r.payment_status).label, strong: true },
+        status: { text: sb.label, pill: (sb.cls === 'blue' ? 'amber' : sb.cls) as 'safe' | 'amber' | 'out' | 'neutral' },
+      }
+    })
+  } else if (kind === 'pending_progress') {
+    const list = rows.value.filter((r) => r.status === 'ordered' || r.status === 'partial')
+    statModalTitle.value = 'Riwayat Pengadaan Menunggu / Diterima Sebagian'
+    statModalSubtitle.value = `${list.length} pengadaan masih menunggu kelengkapan barang datang`
+    statModalEmpty.value = 'Tidak ada pengadaan yang sedang menunggu barang.'
+    statModalColumns.value = [
+      { key: 'doc', label: 'Kode Pengadaan / PO' },
+      { key: 'supplier', label: 'Supplier / Toko' },
+      { key: 'ordered', label: 'Dipesan' },
+      { key: 'received', label: 'Sudah Masuk' },
+      { key: 'remaining', label: 'Sisa' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = list.map((r) => {
+      const rem = Math.max(0, Number(r.total_ordered || 0) - Number(r.total_received || 0))
+      return {
+        doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
+        supplier: r.supplier_name,
+        ordered: `${formatNumber(r.total_ordered)} unit`,
+        received: `${formatNumber(r.total_received)} unit (${r.progress_percent}%)`,
+        remaining: { text: `${formatNumber(rem)} unit`, strong: true },
+        status: { text: r.status === 'partial' ? 'Diterima Sebagian' : 'Menunggu Barang', pill: 'amber' },
+      }
+    })
+  } else {
+    const list = rows.value.filter((r) => r.payment_status !== 'paid' && r.status !== 'cancelled')
+    statModalTitle.value = 'Riwayat Pengadaan Belum Lunas'
+    statModalSubtitle.value = `${list.length} pengadaan memiliki sisa kewajiban pembayaran`
+    statModalEmpty.value = 'Semua pengadaan aktif sudah lunas.'
+    statModalColumns.value = [
+      { key: 'doc', label: 'Kode Pengadaan / PO' },
+      { key: 'supplier', label: 'Supplier / Toko' },
+      { key: 'total', label: 'Total Nilai' },
+      { key: 'paid', label: 'Sudah Dibayar' },
+      { key: 'remaining', label: 'Sisa Tagihan' },
+      { key: 'status', label: 'Status Bayar' },
+    ]
+    statModalRows.value = list.map((r) => {
+      const rem = Math.max(0, Number(r.remaining_amount ?? (Number(r.total_amount || 0) - Number(r.paid_amount || 0))))
+      return {
+        doc: { text: r.procurement_no, sub: `${formatDate(r.procurement_date)}${r.po_number ? ` · PO: ${r.po_number}` : ''}`, strong: true },
+        supplier: r.supplier_name,
+        total: formatCurrency(r.total_amount),
+        paid: formatCurrency(r.paid_amount),
+        remaining: { text: formatCurrency(rem), strong: true },
+        status: { text: r.payment_status === 'partial' ? 'DP / Sebagian' : 'Belum Dibayar', pill: r.payment_status === 'partial' ? 'amber' : 'out' },
+      }
+    })
+  }
+}
+
+async function cancelProcurement(row: ProcurementRow) {
+  if (Number(row.total_received) > 0) {
+    toast.error('Pengadaan yang sudah ada barang masuk tidak dapat dibatalkan')
+    return
+  }
+  if (!window.confirm(`Batalkan pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Nomor PO tidak akan tampil lagi di Barang Masuk.`)) return
+  try {
+    await api(`/api/procurements/${row.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'cancelled' }),
+    })
+    toast.success(`Pengadaan ${row.procurement_no} berhasil dibatalkan`, 'Pengadaan Dibatalkan')
+    await load()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal membatalkan pengadaan')
+  }
+}
+
 function statusBadge(s: string) {
   const map: Record<string, { label: string; cls: string }> = {
     ordered: { label: 'Menunggu Barang', cls: 'amber' },
@@ -329,9 +438,9 @@ function payBadge(s: string) {
   return map[s] || { label: s, cls: 'neutral' }
 }
 
-onMounted(async () => {
-  await Promise.all([load(), master.refresh()])
-  if (route.query.action === 'new') openCreateModal()
+onMounted(() => {
+  if (route.query.action === 'new') void openCreateModal()
+  void Promise.all([load(), master.refresh()])
 })
 </script>
 
@@ -349,9 +458,18 @@ onMounted(async () => {
     </section>
 
     <section class="mini-stats">
-      <div><span class="mini-icon teal"><ShoppingBag :size="19" /></span><p>Total pengadaan<strong>{{ rows.length }}</strong></p></div>
-      <div><span class="mini-icon amber"><PackageCheck :size="19" /></span><p>Menunggu / Sebagian<strong>{{ rows.filter(r => r.status === 'ordered' || r.status === 'partial').length }}</strong></p></div>
-      <div><span class="mini-icon red"><Wallet :size="19" /></span><p>Belum Lunas<strong>{{ rows.filter(r => r.payment_status !== 'paid' && r.status !== 'cancelled').length }}</strong></p></div>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('all')">
+        <span class="mini-icon unified"><ShoppingBag :size="19" /></span>
+        <p>Total pengadaan<strong>{{ rows.length }}</strong></p>
+      </button>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('pending_progress')">
+        <span class="mini-icon unified"><PackageCheck :size="19" /></span>
+        <p>Menunggu / Sebagian<strong>{{ rows.filter(r => r.status === 'ordered' || r.status === 'partial').length }}</strong></p>
+      </button>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('unpaid')">
+        <span class="mini-icon unified"><Wallet :size="19" /></span>
+        <p>Belum Lunas<strong>{{ rows.filter(r => r.payment_status !== 'paid' && r.status !== 'cancelled').length }}</strong></p>
+      </button>
     </section>
 
     <section class="panel data-panel">
@@ -360,6 +478,7 @@ onMounted(async () => {
         <button :class="{ active: statusFilter === 'ordered' }" @click="statusFilter = 'ordered'">Menunggu Barang</button>
         <button :class="{ active: statusFilter === 'partial' }" @click="statusFilter = 'partial'">Diterima Sebagian</button>
         <button :class="{ active: statusFilter === 'completed' }" @click="statusFilter = 'completed'">Terpenuhi</button>
+        <button :class="{ active: statusFilter === 'cancelled' }" @click="statusFilter = 'cancelled'">Dibatalkan ({{ rows.filter(r => r.status === 'cancelled').length }})</button>
       </div>
       <div class="table-toolbar">
         <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Pengadaan (PGD), No. PO, PR, toko online / supplier..." /></label>
@@ -369,8 +488,13 @@ onMounted(async () => {
         <table>
           <thead>
             <tr>
-              <th>Kode Pengadaan / PO</th><th>Toko Online / Supplier</th><th>Item Dipesan</th>
-              <th>Progress Kedatangan</th><th>Nilai & Pembayaran</th><th>Aksi</th>
+              <th>
+                <button type="button" class="th-sort-btn" @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'">
+                  Kode Pengadaan / PO <ArrowUpDown :size="13" /> <span>{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                </button>
+              </th>
+              <th>Toko Online / Supplier</th><th>Item Dipesan</th>
+              <th>Progress Kedatangan</th><th>Nilai &amp; Pembayaran</th><th>Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -436,6 +560,14 @@ onMounted(async () => {
                     @click="openEditModal(row)"
                   >
                     <Edit3 :size="15" />
+                  </button>
+                  <button
+                    v-if="(row.status === 'ordered' || row.status === 'draft') && Number(row.total_received) === 0"
+                    class="icon-button danger"
+                    title="Batalkan pengadaan (belum ada barang masuk)"
+                    @click="cancelProcurement(row)"
+                  >
+                    <XCircle :size="15" />
                   </button>
                   <button class="icon-button" title="Lihat detail & progress" @click="openDetail(row.id)"><Eye :size="15" /></button>
                 </div>
@@ -633,5 +765,15 @@ onMounted(async () => {
 
     <ReceiptModal :open="showReceiptModal" :initial-procurement-id="receiptProcId" @close="showReceiptModal = false" @saved="load" />
     <PaymentModal :open="showPaymentModal" :procurements="rows" :initial-procurement-id="paymentProcId" @close="showPaymentModal = false" @saved="load" />
+
+    <StatHistoryModal
+      :open="statModalOpen"
+      :title="statModalTitle"
+      :subtitle="statModalSubtitle"
+      :columns="statModalColumns"
+      :rows="statModalRows"
+      :empty-text="statModalEmpty"
+      @close="statModalOpen = false"
+    />
   </div>
 </template>

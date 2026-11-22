@@ -262,7 +262,7 @@ export class LocalInventoryService implements InventoryService {
     }
   }
 
-  async getDashboard(month: number, year: number) {
+  async getDashboard(month: number, year: number, period: 'all' | 'year' | 'month' = 'all') {
     const state = await this.load()
     const inv = this.buildInventoryRows(state)
     const itemTypes = state.items.filter((i) => i.active).length
@@ -275,12 +275,14 @@ export class LocalInventoryService implements InventoryService {
     }
     const stockByUnit = [...unitTotalsMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([unit, quantity]) => ({ unit, quantity }))
 
-    const start = new Date(year, month - 1, 1)
-    const end = new Date(year, month, 1)
-    const purchaseCount = state.purchases.filter((p) => {
-      const d = new Date(p.received_date)
+    const start = period === 'year' ? new Date(year, 0, 1) : new Date(year, month - 1, 1)
+    const end = period === 'year' ? new Date(year + 1, 0, 1) : new Date(year, month, 1)
+    const inPeriod = (iso: string) => {
+      if (period === 'all') return true
+      const d = new Date(iso)
       return d >= start && d < end
-    }).length
+    }
+    const purchaseCount = state.purchases.filter((p) => inPeriod(p.received_date)).length
 
     const units = [...new Set(state.items.filter((i) => i.active).map((i) => i.unit))].sort()
     const variantUnit = new Map<string, string>()
@@ -294,8 +296,7 @@ export class LocalInventoryService implements InventoryService {
       let outgoing = 0
       for (const sm of state.stock_movements) {
         if (variantUnit.get(sm.variant_id) !== unit) continue
-        const d = new Date(sm.occurred_at)
-        if (d < start || d >= end) continue
+        if (!inPeriod(sm.occurred_at)) continue
         if (sm.quantity_delta > 0 && (sm.movement_type === 'receipt' || sm.movement_type === 'opening_stock')) incoming += sm.quantity_delta
         if (sm.quantity_delta < 0 && sm.movement_type === 'issuance') outgoing += Math.abs(sm.quantity_delta)
       }
@@ -923,6 +924,10 @@ export class LocalInventoryService implements InventoryService {
     const state = await this.load()
     const proc = state.procurements.find((p) => p.id === id)
     if (!proc) throw new Error('Pengadaan tidak ditemukan')
+    if (status === 'cancelled') {
+      const totalRec = proc.items.reduce((s, i) => s + Number(i.received_quantity || 0), 0)
+      if (totalRec > 0) throw new Error('Pengadaan yang sudah memiliki barang masuk tidak dapat dibatalkan')
+    }
     proc.status = status as LocalState['procurements'][number]['status']
     await this.save(state)
   }

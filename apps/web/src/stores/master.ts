@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api } from '@/lib/api'
+import { api, invalidateApiCache } from '@/lib/api'
 
 export interface Category { id: string; code: string; name: string }
 export interface Department { id: string; code: string; name: string; active: boolean }
@@ -26,7 +26,7 @@ export interface VariantStock {
   total_available: number; stock_status: 'safe' | 'low' | 'out'
 }
 
-const CACHE_TTL_MS = 20_000
+const CACHE_TTL_MS = 45_000
 
 export const useMasterStore = defineStore('master', () => {
   const loaded = ref(false)
@@ -76,6 +76,7 @@ export const useMasterStore = defineStore('master', () => {
     const fresh = loaded.value && Date.now() - lastFetchedAt.value < CACHE_TTL_MS
     if (fresh && !force) return
     if (inFlight && !force) return inFlight
+    if (force) invalidateApiCache('/api/master/summary')
 
     const run = async () => {
       loading.value = true

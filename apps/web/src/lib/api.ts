@@ -20,15 +20,63 @@ export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message) }
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (!(init.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json')
+const getCache = new Map<string, { ts: number; data: unknown }>()
+const inFlightGets = new Map<string, Promise<unknown>>()
+const GET_CACHE_TTL_MS = 30_000
+
+const numberFmt = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 })
+const currencyFmt = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
+const dateFmt = new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+
+export function invalidateApiCache(prefix?: string) {
+  if (!prefix) {
+    getCache.clear()
+    return
   }
-  const response = await fetch(`${baseUrl}${path}`, { ...init, headers })
-  const body = await response.json().catch(() => ({ message: 'Respons server tidak valid' }))
-  if (!response.ok) throw new ApiError(body.message || 'Permintaan gagal', response.status)
-  return body
+  for (const key of getCache.keys()) {
+    if (key.startsWith(prefix)) getCache.delete(key)
+  }
+}
+
+export function prefetchApi(path: string) {
+  void api(path).catch(() => {})
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
+  const isGet = method === 'GET'
+
+  if (isGet) {
+    const cached = getCache.get(path)
+    if (cached && Date.now() - cached.ts < GET_CACHE_TTL_MS) {
+      return cached.data as T
+    }
+    const existing = inFlightGets.get(path)
+    if (existing) return existing as Promise<T>
+  } else {
+    getCache.clear()
+  }
+
+  const run = async (): Promise<T> => {
+    const headers = new Headers(init.headers)
+    if (!(init.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+    const response = await fetch(`${baseUrl}${path}`, { ...init, headers })
+    const body = await response.json().catch(() => ({ message: 'Respons server tidak valid' }))
+    if (!response.ok) throw new ApiError(body.message || 'Permintaan gagal', response.status)
+    if (isGet) {
+      getCache.set(path, { ts: Date.now(), data: body })
+    }
+    return body
+  }
+
+  if (isGet) {
+    const p = run().finally(() => inFlightGets.delete(path))
+    inFlightGets.set(path, p)
+    return p
+  }
+  return run()
 }
 
 export async function uploadAttachment(file: File): Promise<{ key: string; name: string }> {
@@ -62,7 +110,7 @@ export async function imageUrlToDataUrl(url: string): Promise<string | null> {
 }
 
 export const formatNumber = (value: number | string) =>
-  new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 }).format(Number(value || 0))
+  numberFmt.format(Number(value || 0))
 
 /** Displays clean item name, appending size only when a meaningful size variant exists. */
 export const variantLabel = (item: { name?: string | null; size?: string | null }) => {
@@ -72,13 +120,13 @@ export const variantLabel = (item: { name?: string | null; size?: string | null 
 }
 
 export const formatCurrency = (value: number | string) =>
-  new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(value || 0))
+  currencyFmt.format(Number(value || 0))
 
 export const formatDate = (value?: string | null) => {
   if (!value) return '—'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
-  return new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
+  return dateFmt.format(d)
 }
 
 export const conditionLabel = (condition: string) => {

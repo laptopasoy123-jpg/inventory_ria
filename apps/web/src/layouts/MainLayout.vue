@@ -64,6 +64,7 @@ const navGroups = [
       { name: 'receipts', label: 'Barang Masuk', icon: PackagePlus },
       { name: 'issuances', label: 'Barang Keluar', icon: PackageMinus },
       { name: 'returns', label: 'Pengembalian APD', icon: PackageCheck },
+      { name: 'employees', label: 'Karyawan & APD', icon: UsersRound },
     ],
   },
   {
@@ -76,7 +77,7 @@ const navGroups = [
   {
     section: 'Konfigurasi',
     items: [
-      { name: 'master', label: 'Master & Pengaturan', icon: UsersRound },
+      { name: 'master', label: 'Master & Pengaturan', icon: Settings2 },
     ],
   },
 ]
@@ -167,13 +168,13 @@ onUnmounted(() => {
       </div>
 
       <div class="sidebar-foot">
-        <a href="https://daysheet.id" target="_blank" rel="noopener noreferrer" class="daysheet-card" title="Kunjungi Daysheet.id">
-          <span class="daysheet-logo-ring">
-            <img src="/daysheet-logo.png" alt="DaySheet Logo" class="daysheet-logo" />
+        <a href="https://daysheet.id" target="_blank" rel="noopener noreferrer" class="daysheet-card" title="Kunjungi situs resmi DaySheet.id">
+          <span class="daysheet-brand-pill">
+            <img src="/daysheet-logo.png" alt="DaySheet.id" class="daysheet-logo-wordmark" />
           </span>
-          <span class="daysheet-copy">
+          <span class="daysheet-sub">
             <small>Powered by</small>
-            <strong>DaySheet<span class="dot">.id</span></strong>
+            <span>daysheet.id</span>
           </span>
           <ArrowUpRight :size="15" class="daysheet-arrow" />
         </a>
@@ -231,8 +232,9 @@ onUnmounted(() => {
           <span>INVENTRA · <strong>{{ master.company.name }}</strong> — Sistem Kontrol Inventaris APD</span>
         </div>
         <a href="https://daysheet.id" target="_blank" rel="noopener noreferrer" class="footer-copyright" title="Kunjungi situs resmi DaySheet.id">
-          <img src="/daysheet-logo.png" alt="DaySheet" />
-          <span>Copyright © {{ now.getFullYear() }} by <strong>DaySheet.id</strong> · All rights reserved</span>
+          <span>© {{ now.getFullYear() }}</span>
+          <span class="footer-logo-chip"><img src="/daysheet-logo.png" alt="DaySheet.id" /></span>
+          <span>All rights reserved</span>
         </a>
       </footer>
     </main>
@@ -260,7 +262,7 @@ onUnmounted(() => {
           <div v-if="loadingActivity" class="loading-row">Memuat pergerakan terbaru...</div>
           <div v-else class="table-wrap">
             <table>
-              <thead><tr><th>Tanggal</th><th>Aktivitas</th><th>Barang</th><th>Kondisi</th><th>Perubahan</th><th>Saldo Akhir</th></tr></thead>
+              <thead><tr><th>Tanggal</th><th>Aktivitas</th><th>Barang</th><th>Kondisi</th><th>Perubahan</th><th>Stok Akhir</th></tr></thead>
               <tbody>
                 <tr v-for="m in recentMovements" :key="m.id">
                   <td>{{ formatDate(m.occurred_at) }}</td>

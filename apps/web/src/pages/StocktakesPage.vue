@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, Edit3, Eye, Plus
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
+import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
 import { api, conditionLabel, downloadCsv, formatDate, formatNumber, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -29,7 +30,7 @@ const lostLogs = ref<Array<{
   item_name: string; unit: string; qty: number; reason: string
 }>>([])
 const loading = ref(true)
-const statusFilter = ref<'all' | 'pending_review' | 'completed' | 'lost_logs'>('all')
+const statusFilter = ref<'all' | 'pending_review' | 'completed' | 'surplus' | 'minus' | 'lost_logs'>('all')
 const page = ref(1)
 const lostPage = ref(1)
 
@@ -60,11 +61,114 @@ const showDetailModal = ref(false)
 const activeStocktake = ref<StocktakeRow | null>(null)
 const finalizing = ref(false)
 
-const filteredRows = computed(() =>
-  statusFilter.value === 'all' || statusFilter.value === 'lost_logs'
-    ? rows.value
-    : rows.value.filter((r) => r.status === statusFilter.value),
-)
+// Stat History Drill-down Modal
+const statModalOpen = ref(false)
+const statModalTitle = ref('')
+const statModalSubtitle = ref('')
+const statModalEmpty = ref('')
+const statModalColumns = ref<HistoryColumn[]>([])
+const statModalRows = ref<Array<Record<string, HistoryCell>>>([])
+
+function openStatHistory(kind: 'sessions' | 'surplus' | 'minus') {
+  statModalOpen.value = true
+  if (kind === 'sessions') {
+    statModalTitle.value = 'Riwayat Semua Sesi Stok Opname'
+    statModalSubtitle.value = `Total ${rows.value.length} sesi rekonsiliasi stok opname`
+    statModalEmpty.value = 'Belum ada sesi stok opname.'
+    statModalColumns.value = [
+      { key: 'doc', label: 'No. & Tanggal SO' },
+      { key: 'officer', label: 'Petugas' },
+      { key: 'count', label: 'Jumlah Varian' },
+      { key: 'variance', label: 'Ringkasan Selisih' },
+      { key: 'status', label: 'Status' },
+    ]
+    statModalRows.value = rows.value.map((st) => {
+      const v = varianceSummary(st)
+      return {
+        doc: { text: st.stocktake_no, sub: formatDate(st.reference_at), strong: true },
+        officer: st.officer_name,
+        count: `${st.stocktake_items?.length || 0} varian`,
+        variance: `+${formatNumber(v.plus)} / -${formatNumber(v.minus)}`,
+        status: { text: st.status === 'completed' ? 'Selesai' : 'Menunggu Review', pill: st.status === 'completed' ? 'safe' : 'amber' },
+      }
+    })
+  } else if (kind === 'surplus') {
+    statModalTitle.value = 'Riwayat Selisih Surplus (+) Stok Opname'
+    statModalSubtitle.value = `Total +${formatNumber(totalGlobalPlus.value)} unit surplus dari seluruh sesi SO`
+    statModalEmpty.value = 'Belum ada item surplus (+) dari stok opname.'
+    statModalColumns.value = [
+      { key: 'doc', label: 'No. & Tanggal SO' },
+      { key: 'item', label: 'Barang & Kondisi' },
+      { key: 'system', label: 'Stok Sistem' },
+      { key: 'physical', label: 'Stok Fisik' },
+      { key: 'diff', label: 'Surplus (+)' },
+      { key: 'reason', label: 'Alasan' },
+    ]
+    const out: Array<Record<string, HistoryCell>> = []
+    for (const st of rows.value) {
+      for (const it of st.stocktake_items ?? []) {
+        const diff = Number(it.physical_quantity) - Number(it.system_quantity)
+        if (diff <= 0) continue
+        const unit = it.item_variants?.items?.unit || 'unit'
+        out.push({
+          doc: { text: st.stocktake_no, sub: `${formatDate(st.reference_at)} · ${st.officer_name}`, strong: true },
+          item: { text: variantLabel({ name: it.item_variants?.items?.name || 'Barang', size: it.item_variants?.size }), sub: conditionLabel(it.condition), strong: true },
+          system: `${formatNumber(it.system_quantity)} ${unit}`,
+          physical: `${formatNumber(it.physical_quantity)} ${unit}`,
+          diff: { text: `+${formatNumber(diff)} ${unit}`, pill: 'plus' },
+          reason: it.reason || '-',
+        })
+      }
+    }
+    statModalRows.value = out
+  } else {
+    statModalTitle.value = 'Riwayat Selisih Kurang / Hilang (-) Stok Opname'
+    statModalSubtitle.value = `Total -${formatNumber(totalGlobalMinus.value)} unit kurang/hilang dari seluruh sesi SO`
+    statModalEmpty.value = 'Tidak ada item kurang / hilang (-).'
+    statModalColumns.value = [
+      { key: 'doc', label: 'No. & Tanggal' },
+      { key: 'item', label: 'Barang & Sumber' },
+      { key: 'system', label: 'Sistem' },
+      { key: 'physical', label: 'Fisik' },
+      { key: 'diff', label: 'Kurang / Hilang' },
+      { key: 'reason', label: 'Alasan' },
+    ]
+    const out: Array<Record<string, HistoryCell>> = []
+    for (const st of rows.value) {
+      for (const it of st.stocktake_items ?? []) {
+        const diff = Number(it.physical_quantity) - Number(it.system_quantity)
+        if (diff >= 0) continue
+        const unit = it.item_variants?.items?.unit || 'unit'
+        out.push({
+          doc: { text: st.stocktake_no, sub: `${formatDate(st.reference_at)} · ${st.officer_name}`, strong: true },
+          item: { text: variantLabel({ name: it.item_variants?.items?.name || 'Barang', size: it.item_variants?.size }), sub: conditionLabel(it.condition), strong: true },
+          system: `${formatNumber(it.system_quantity)} ${unit}`,
+          physical: `${formatNumber(it.physical_quantity)} ${unit}`,
+          diff: { text: `${formatNumber(diff)} ${unit}`, pill: 'minus' },
+          reason: it.reason || '-',
+        })
+      }
+    }
+    for (const log of lostLogs.value) {
+      out.push({
+        doc: { text: log.transaction_no, sub: `${formatDate(log.returned_at)} · Pengembalian`, strong: true },
+        item: { text: log.item_name, sub: `Karyawan: ${log.employee_name}`, strong: true },
+        system: '—',
+        physical: 'Hilang',
+        diff: { text: `-${formatNumber(log.qty)} ${log.unit}`, pill: 'minus' },
+        reason: log.reason || 'Hilang saat pengembalian APD',
+      })
+    }
+    statModalRows.value = out
+  }
+}
+
+const filteredRows = computed(() => {
+  if (statusFilter.value === 'all' || statusFilter.value === 'lost_logs') return rows.value
+  if (statusFilter.value === 'surplus') return rows.value.filter((r) => varianceSummary(r).plus > 0)
+  if (statusFilter.value === 'minus') return rows.value.filter((r) => varianceSummary(r).minus > 0)
+  return rows.value.filter((r) => r.status === statusFilter.value)
+})
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
 const pagedLostLogs = computed(() => lostLogs.value.slice((lostPage.value - 1) * 10, lostPage.value * 10))
 watch(statusFilter, () => { page.value = 1; lostPage.value = 1 })
@@ -330,9 +434,18 @@ onMounted(load)
     </section>
 
     <section class="mini-stats">
-      <div><span class="mini-icon teal"><ClipboardCheck :size="19" /></span><p>Sesi Opname<strong>{{ rows.length }}</strong></p></div>
-      <div><span class="mini-icon teal"><Plus :size="19" /></span><p>Total Surplus (+)<strong>+{{ formatNumber(totalGlobalPlus) }}</strong></p></div>
-      <div><span class="mini-icon red"><ClipboardCheck :size="19" /></span><p>Total Kurang / Hilang (-)<strong>-{{ formatNumber(totalGlobalMinus) }}</strong></p></div>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('sessions')">
+        <span class="mini-icon unified"><ClipboardCheck :size="19" /></span>
+        <p>Sesi Opname<strong>{{ rows.length }}</strong></p>
+      </button>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('surplus')">
+        <span class="mini-icon unified"><Plus :size="19" /></span>
+        <p>Total Surplus (+)<strong>+{{ formatNumber(totalGlobalPlus) }}</strong></p>
+      </button>
+      <button type="button" class="mini-stat-btn" @click="openStatHistory('minus')">
+        <span class="mini-icon unified"><AlertTriangle :size="19" /></span>
+        <p>Total Kurang / Hilang (-)<strong>-{{ formatNumber(totalGlobalMinus) }}</strong></p>
+      </button>
     </section>
 
     <section class="panel data-panel">
@@ -520,5 +633,15 @@ onMounted(load)
         </button>
       </template>
     </BaseModal>
+
+    <StatHistoryModal
+      :open="statModalOpen"
+      :title="statModalTitle"
+      :subtitle="statModalSubtitle"
+      :columns="statModalColumns"
+      :rows="statModalRows"
+      :empty-text="statModalEmpty"
+      @close="statModalOpen = false"
+    />
   </div>
 </template>

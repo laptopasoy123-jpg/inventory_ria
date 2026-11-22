@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Building2, Edit3, ImagePlus, Package, Plus, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, UserRound, Wallet } from '@lucide/vue'
+import { Building2, Edit3, ImagePlus, Package, Plus, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ItemFormModal from '@/components/ItemFormModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -10,7 +10,7 @@ import { itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore, type ItemMaster } from '@/stores/master'
 
-type MasterTab = 'items' | 'departments' | 'officers' | 'employees' | 'suppliers' | 'online_shops' | 'funders'
+type MasterTab = 'items' | 'departments' | 'officers' | 'suppliers' | 'online_shops' | 'funders'
 
 const master = useMasterStore()
 const toast = useToast()
@@ -106,17 +106,6 @@ const roleOptions = [
   { value: 'Admin Inventaris & Opname', label: 'Admin Inventaris & Opname' },
 ]
 
-const contractOptions = [
-  { value: 'permanent', label: 'Tetap' },
-  { value: 'contract', label: 'Kontrak' },
-  { value: 'intern', label: 'Magang' },
-  { value: 'inactive', label: 'Nonaktif' },
-]
-
-const departmentOptions = computed(() =>
-  master.departments.map((d) => ({ value: d.id, label: d.name, sublabel: d.code })),
-)
-
 const showItemModal = ref(false)
 const editingItem = ref<ItemMaster | null>(null)
 
@@ -143,7 +132,6 @@ const tabs = [
   { key: 'items' as const, label: 'Nama APD', icon: Package },
   { key: 'departments' as const, label: 'Departemen', icon: Building2 },
   { key: 'officers' as const, label: 'Petugas Sistem', icon: ShieldCheck },
-  { key: 'employees' as const, label: 'Karyawan', icon: UserRound },
   { key: 'suppliers' as const, label: 'Supplier', icon: Truck },
   { key: 'online_shops' as const, label: 'Toko Online', icon: ShoppingBag },
   { key: 'funders' as const, label: 'Pihak Penalang', icon: Wallet },
@@ -160,10 +148,6 @@ const filteredDepartments = computed(() => {
 const filteredOfficers = computed(() => {
   const q = search.value.toLowerCase()
   return master.officers.filter((o) => !q || o.name.toLowerCase().includes(q) || o.role_label.toLowerCase().includes(q))
-})
-const filteredEmployees = computed(() => {
-  const q = search.value.toLowerCase()
-  return master.employees.filter((e) => !q || e.name.toLowerCase().includes(q) || e.nik.toLowerCase().includes(q) || (e.departments?.name || '').toLowerCase().includes(q))
 })
 const filteredSuppliers = computed(() => {
   const q = search.value.toLowerCase()
@@ -184,7 +168,6 @@ const activeTotalCount = computed(() => {
     items: filteredItems.value.length,
     departments: filteredDepartments.value.length,
     officers: filteredOfficers.value.length,
-    employees: filteredEmployees.value.length,
     suppliers: filteredSuppliers.value.length,
     online_shops: filteredOnlineShops.value.length,
     funders: filteredFunders.value.length,
@@ -245,7 +228,6 @@ const modalTitle = computed(() => {
     items: 'Nama APD',
     departments: 'Departemen',
     officers: 'Petugas Sistem',
-    employees: 'Karyawan',
     suppliers: 'Supplier',
     online_shops: 'Toko Online',
     funders: 'Pihak Penalang',
@@ -287,15 +269,6 @@ async function submitGeneric() {
         notes: genericForm.notes || null,
         active: genericForm.active,
       }
-    } else if (activeTab.value === 'employees') {
-      endpoint = `/api/master/employees${suffix}`
-      payload = {
-        nik: genericForm.nik,
-        name: genericForm.name,
-        position: genericForm.position,
-        departmentId: genericForm.departmentId,
-        contractStatus: genericForm.contractStatus,
-      }
     }
 
     await api(endpoint, { method, body: JSON.stringify(payload) })
@@ -315,7 +288,6 @@ async function deleteRow(tab: MasterTab, id: string, label: string) {
     items: 'items',
     departments: 'departments',
     officers: 'officers',
-    employees: 'employees',
     suppliers: 'suppliers',
     online_shops: 'suppliers',
     funders: 'funders',
@@ -330,7 +302,7 @@ async function deleteRow(tab: MasterTab, id: string, label: string) {
 }
 
 onMounted(() => {
-  master.refresh(true).catch((e) => toast.error(e instanceof Error ? e.message : 'Gagal memuat pengaturan'))
+  master.refresh().catch((e) => toast.error(e instanceof Error ? e.message : 'Gagal memuat pengaturan'))
 })
 </script>
 
@@ -394,7 +366,6 @@ onMounted(() => {
               t.key === 'items' ? master.items.length
               : t.key === 'departments' ? master.departments.length
               : t.key === 'officers' ? master.officers.length
-              : t.key === 'employees' ? master.employees.length
               : t.key === 'suppliers' ? master.suppliers.filter((s) => (s.vendor_type || 'supplier') === 'supplier').length
               : t.key === 'online_shops' ? master.suppliers.filter((s) => s.vendor_type === 'online_shop').length
               : master.funders.length
@@ -479,28 +450,6 @@ onMounted(() => {
               </td>
             </tr>
             <tr v-if="!filteredOfficers.length"><td colspan="4"><div class="empty-state compact">Belum ada nama petugas terdaftar.</div></td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Employees Table -->
-      <div v-else-if="activeTab === 'employees'" class="table-wrap">
-        <table>
-          <thead><tr><th>NIK & Nama</th><th>Jabatan</th><th>Departemen</th><th>Status Kontrak</th><th /></tr></thead>
-          <tbody>
-            <tr v-for="row in paginate(filteredEmployees)" :key="row.id">
-              <td><span class="item-cell"><i>{{ row.name.slice(0, 2).toUpperCase() }}</i><span><strong>{{ row.name }}</strong><small>{{ row.nik }}</small></span></span></td>
-              <td>{{ row.position }}</td>
-              <td>{{ row.departments?.name || '-' }}</td>
-              <td><span class="tag-pill">{{ row.contract_status }}</span></td>
-              <td>
-                <div class="row-actions">
-                  <button class="icon-button" title="Edit karyawan" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
-                  <button class="icon-button danger" title="Hapus karyawan" @click="deleteRow('employees', row.id, row.name)"><Trash2 :size="15" /></button>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="!filteredEmployees.length"><td colspan="5"><div class="empty-state compact">Belum ada karyawan.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -591,22 +540,6 @@ onMounted(() => {
             <ModernSelect v-model="genericForm.roleLabel" :options="roleOptions" :searchable="false" />
           </label>
           <label class="field"><span>Status</span><ModernSelect v-model="genericForm.active" :options="activeOptions" :searchable="false" /></label>
-        </template>
-
-        <template v-else-if="activeTab === 'employees'">
-          <div class="form-grid-2">
-            <label class="field"><span>NIK *</span><input v-model="genericForm.nik" required placeholder="RIA-2026-001" /></label>
-            <label class="field"><span>Status Kontrak</span>
-              <ModernSelect v-model="genericForm.contractStatus" :options="contractOptions" :searchable="false" />
-            </label>
-          </div>
-          <label class="field"><span>Nama Lengkap *</span><input v-model="genericForm.name" required /></label>
-          <div class="form-grid-2">
-            <label class="field"><span>Jabatan *</span><input v-model="genericForm.position" required /></label>
-            <label class="field"><span>Departemen *</span>
-              <ModernSelect v-model="genericForm.departmentId" :options="departmentOptions" required placeholder="Pilih departemen" />
-            </label>
-          </div>
         </template>
 
         <template v-else-if="activeTab === 'suppliers' || activeTab === 'online_shops'">

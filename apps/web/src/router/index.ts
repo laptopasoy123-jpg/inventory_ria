@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'pembelian', redirect: '/barang-masuk' },
         { path: 'barang-keluar', name: 'issuances', component: () => import('@/pages/IssuancesPage.vue') },
         { path: 'pengembalian', name: 'returns', component: () => import('@/pages/ReturnsPage.vue') },
+        { path: 'karyawan', name: 'employees', component: () => import('@/pages/EmployeesPage.vue') },
         { path: 'stok', name: 'inventory', component: () => import('@/pages/InventoryPage.vue') },
         { path: 'stok-opname', name: 'stocktakes', component: () => import('@/pages/StocktakesPage.vue') },
         { path: 'pembayaran', name: 'payments', component: () => import('@/pages/PaymentsPage.vue') },
