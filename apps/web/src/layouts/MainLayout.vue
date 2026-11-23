@@ -252,7 +252,7 @@ onMounted(() => {
           </span>
           <span class="daysheet-sub">
             <small>Powered by</small>
-            <span>daysheet.id</span>
+            <span>DaySheet.id</span>
           </span>
           <ArrowUpRight :size="15" class="daysheet-arrow" />
         </a>
@@ -306,9 +306,8 @@ onMounted(() => {
           <span>INVENTRA · <strong>{{ master.company.name }}</strong> — Sistem Kontrol Inventaris APD</span>
         </div>
         <a href="https://daysheet.id" target="_blank" rel="noopener noreferrer" class="footer-copyright" title="Kunjungi situs resmi DaySheet.id">
-          <span>© {{ currentYear }}</span>
           <span class="footer-logo-chip"><img src="/daysheet-logo.png" alt="DaySheet.id" /></span>
-          <span>All rights reserved</span>
+          <span>© {{ currentYear }} <strong>DaySheet.id</strong> · All rights reserved</span>
         </a>
       </footer>
     </main>

@@ -4,6 +4,7 @@ compatibility_date = "2025-02-24"
 
 [vars]
 ALLOWED_ORIGIN = "*"
+SUPABASE_URL = "https://vagqqmfvugorzafwhmor.supabase.co"
 
 [[r2_buckets]]
 binding = "ATTACHMENTS"

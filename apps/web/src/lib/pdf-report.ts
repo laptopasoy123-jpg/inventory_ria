@@ -191,7 +191,7 @@ export function generateInventoryPdf(options: PdfReportOptions) {
           data.cell.styles.textColor = [180, 105, 12]
           data.cell.styles.fontStyle = 'bold'
         }
-        if (/^[+-]?\d[\d.,]*$/.test(text)) {
+        if (/^[+-]?\d[\d.,]*(\s+(pcs|pasang|set|unit|box|lusin|roll|buah|lembar|%)?)?$/i.test(text) || /^Rp\s?[\d.,]+$/.test(text)) {
           data.cell.styles.halign = 'right'
         }
       },

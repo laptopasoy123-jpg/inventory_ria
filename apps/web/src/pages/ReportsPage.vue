@@ -149,11 +149,15 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
     sections.push({
       title: '1. Saldo Stok Inventaris APD Saat Ini',
       subtitle: `Total ${master.variants.length} item APD aktif terdaftar di gudang`,
-      headers: ['Kode', 'Nama Barang', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Total Tersedia'],
+      headers: ['Kode', 'Nama Barang', 'Satuan', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Total Tersedia'],
       rows: master.variants.map((v) => [
-        v.code, variantLabel(v),
-        formatNumber(v.stock_new), formatNumber(v.stock_used_good),
-        formatNumber(v.stock_quarantine), formatNumber(v.stock_damaged),
+        v.code,
+        variantLabel(v),
+        v.unit,
+        `${formatNumber(v.stock_new)} ${v.unit}`,
+        `${formatNumber(v.stock_used_good)} ${v.unit}`,
+        `${formatNumber(v.stock_quarantine)} ${v.unit}`,
+        `${formatNumber(v.stock_damaged)} ${v.unit}`,
         `${formatNumber(v.total_available)} ${v.unit}`,
       ]),
     })
@@ -164,15 +168,18 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
       title: '2. Mutasi Stok & Arus APD',
       subtitle: `Menampilkan ${filteredMovements.value.length} aktivitas mutasi`,
       headers: ['Tanggal', 'Nama Barang', 'Jenis Mutasi', 'Kondisi', 'Perubahan', 'Stok Akhir', 'Keterangan'],
-      rows: filteredMovements.value.map((m) => [
-        formatDate(m.occurred_at),
-        variantLabel({ name: m.item_variants?.items?.name || '-', size: m.item_variants?.size }),
-        movementName(m.movement_type),
-        conditionLabel(m.condition),
-        `${m.quantity_delta >= 0 ? '+' : ''}${formatNumber(m.quantity_delta)}`,
-        formatNumber(m.balance_after),
-        m.notes || '-',
-      ]),
+      rows: filteredMovements.value.map((m) => {
+        const u = m.item_variants?.items?.unit || 'unit'
+        return [
+          formatDate(m.occurred_at),
+          variantLabel({ name: m.item_variants?.items?.name || '-', size: m.item_variants?.size }),
+          movementName(m.movement_type),
+          conditionLabel(m.condition),
+          `${m.quantity_delta >= 0 ? '+' : ''}${formatNumber(m.quantity_delta)} ${u}`,
+          `${formatNumber(m.balance_after)} ${u}`,
+          m.notes || '-',
+        ]
+      }),
     })
   }
 
@@ -186,7 +193,7 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
         formatDate(p.procurement_date),
         p.po_number || '-',
         p.supplier_name,
-        `${p.progress_percent}% (${formatNumber(p.total_received)}/${formatNumber(p.total_ordered)})`,
+        `${formatNumber(p.total_received)} / ${formatNumber(p.total_ordered)} unit (${p.progress_percent}%)`,
         formatCurrency(p.total_amount),
         p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu',
       ]),
@@ -197,15 +204,16 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
     const flatOpname = filteredStocktakes.value.flatMap((st) =>
       st.stocktake_items.map((it) => {
         const diff = Number(it.physical_quantity) - Number(it.system_quantity)
+        const u = it.item_variants?.items?.unit || 'unit'
         return [
           st.stocktake_no,
           formatDate(st.reference_at),
           st.officer_name,
           variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size }),
           conditionLabel(it.condition),
-          formatNumber(it.system_quantity),
-          formatNumber(it.physical_quantity),
-          diff > 0 ? `+${formatNumber(diff)}` : formatNumber(diff),
+          `${formatNumber(it.system_quantity)} ${u}`,
+          `${formatNumber(it.physical_quantity)} ${u}`,
+          `${diff > 0 ? '+' : ''}${formatNumber(diff)} ${u}`,
           it.reason || '-',
         ]
       }),
@@ -468,14 +476,15 @@ onActivated(() => {
 
       <div v-else-if="activeTab === 'stock'" class="table-wrap">
         <table>
-          <thead><tr><th>Kode &amp; Barang</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Total Tersedia</th></tr></thead>
+          <thead><tr><th>Kode &amp; Barang</th><th>Satuan</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Total Tersedia</th></tr></thead>
           <tbody>
             <tr v-for="v in master.variants" :key="v.variant_id">
               <td><strong>{{ variantLabel(v) }}</strong><small class="table-sub">{{ v.code }}</small></td>
-              <td>{{ formatNumber(v.stock_new) }}</td>
-              <td>{{ formatNumber(v.stock_used_good) }}</td>
-              <td>{{ formatNumber(v.stock_quarantine) }}</td>
-              <td>{{ formatNumber(v.stock_damaged) }}</td>
+              <td><span class="tag-pill">{{ v.unit }}</span></td>
+              <td>{{ formatNumber(v.stock_new) }} {{ v.unit }}</td>
+              <td>{{ formatNumber(v.stock_used_good) }} {{ v.unit }}</td>
+              <td>{{ formatNumber(v.stock_quarantine) }} {{ v.unit }}</td>
+              <td>{{ formatNumber(v.stock_damaged) }} {{ v.unit }}</td>
               <td><strong>{{ formatNumber(v.total_available) }} {{ v.unit }}</strong></td>
             </tr>
           </tbody>
@@ -491,8 +500,8 @@ onActivated(() => {
               <td><strong>{{ variantLabel({ name: m.item_variants?.items?.name, size: m.item_variants?.size }) }}</strong></td>
               <td>{{ movementName(m.movement_type) }}</td>
               <td>{{ conditionLabel(m.condition) }}</td>
-              <td><span class="delta-pill" :class="m.quantity_delta >= 0 ? 'plus' : 'minus'">{{ m.quantity_delta >= 0 ? '+' : '' }}{{ formatNumber(m.quantity_delta) }}</span></td>
-              <td><strong>{{ formatNumber(m.balance_after) }}</strong></td>
+              <td><span class="delta-pill" :class="m.quantity_delta >= 0 ? 'plus' : 'minus'">{{ m.quantity_delta >= 0 ? '+' : '' }}{{ formatNumber(m.quantity_delta) }} {{ m.item_variants?.items?.unit || '' }}</span></td>
+              <td><strong>{{ formatNumber(m.balance_after) }} {{ m.item_variants?.items?.unit || '' }}</strong></td>
               <td>{{ m.notes || '-' }}</td>
             </tr>
             <tr v-if="!filteredMovements.length"><td colspan="7"><div class="empty-state compact">Tidak ada mutasi pada rentang tanggal ini.</div></td></tr>

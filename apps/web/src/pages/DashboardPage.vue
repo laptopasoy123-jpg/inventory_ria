@@ -74,6 +74,10 @@ const totalAttentionCount = computed(() =>
   Number(data.value.lowStockTypes || 0) + Number(data.value.outStockTypes || 0),
 )
 
+const availableItemTypes = computed(() =>
+  Math.max(0, Number(data.value.itemTypes || 0) - Number(data.value.outStockTypes || 0)),
+)
+
 const activeFlow = computed(() => {
   if (selectedUnit.value === 'all') {
     const incoming = data.value.periodFlow.reduce((s, f) => s + Number(f.incoming || 0), 0)
@@ -136,7 +140,7 @@ function matchesActivePeriod(dateStr?: string | null) {
 }
 
 async function openDashboardHistory(
-  kind: 'items' | 'incoming' | 'outgoing' | 'attention' | 'low' | 'out' | 'payments' | 'proc_detail' | 'item_movements',
+  kind: 'available' | 'items' | 'incoming' | 'outgoing' | 'attention' | 'low' | 'out' | 'payments' | 'proc_detail' | 'item_movements',
   payload?: ActiveProc | Attention,
 ) {
   historyOpen.value = true
@@ -146,7 +150,7 @@ async function openDashboardHistory(
   historyActionTarget.value = null
 
   try {
-    if (kind === 'items' || kind === 'attention' || kind === 'low' || kind === 'out') {
+    if (kind === 'available' || kind === 'items' || kind === 'attention' || kind === 'low' || kind === 'out') {
       const res = await api<{
         data: Array<{
           variant_id: string; code: string; name: string; size: string; unit: string;
@@ -156,6 +160,7 @@ async function openDashboardHistory(
       }>('/api/inventory?page=1&limit=200')
 
       const list = res.data.filter((item) => {
+        if (kind === 'available') return Number(item.total_available) > 0 && item.stock_status !== 'out'
         if (kind === 'attention') return item.stock_status === 'out' || item.stock_status === 'low'
         if (kind === 'low') return item.stock_status === 'low'
         if (kind === 'out') return item.stock_status === 'out'
@@ -163,20 +168,29 @@ async function openDashboardHistory(
       })
 
       historyTitle.value =
-        kind === 'attention'
-          ? 'Barang Perlu Segera Dipesan (Habis & Menipis)'
-          : kind === 'low'
-            ? 'Daftar Stok Menipis'
-            : kind === 'out'
-              ? 'Daftar Stok Habis'
-              : 'Daftar Seluruh Jenis Barang APD'
+        kind === 'available'
+          ? 'Daftar Barang Stok Siap Pakai (Tidak Habis)'
+          : kind === 'attention'
+            ? 'Barang Perlu Segera Dipesan (Habis & Menipis)'
+            : kind === 'low'
+              ? 'Daftar Stok Menipis'
+              : kind === 'out'
+                ? 'Daftar Stok Habis'
+                : 'Daftar Seluruh Jenis Barang APD'
       historySubtitle.value =
-        kind === 'items'
-          ? 'Rincian stok siap pakai (Baru + Bekas Layak), karantina, dan rusak'
-          : 'Daftar barang yang sudah habis atau mendekati batas minimum'
-      historyEmpty.value = kind === 'items' ? 'Belum ada barang APD terdaftar.' : 'Semua stok saat ini aman!'
+        kind === 'available'
+          ? 'Hanya menampilkan barang dengan stok tersedia (> 0) — tidak termasuk barang habis, karantina, atau rusak'
+          : kind === 'items'
+            ? 'Rincian stok siap pakai (Baru + Bekas Layak), karantina, dan rusak'
+            : 'Daftar barang yang sudah habis atau mendekati batas minimum'
+      historyEmpty.value =
+        kind === 'available'
+          ? 'Belum ada barang yang memiliki stok siap pakai.'
+          : kind === 'items'
+            ? 'Belum ada barang APD terdaftar.'
+            : 'Semua stok saat ini aman!'
       historyActionLabel.value = 'Buka Stok Inventaris'
-      historyActionTarget.value = { name: 'inventory', query: kind === 'items' ? undefined : { status: kind } }
+      historyActionTarget.value = { name: 'inventory', query: kind === 'items' ? undefined : kind === 'available' ? { status: 'safe' } : { status: kind } }
       historyColumns.value = [
         { key: 'item', label: 'Barang APD' },
         { key: 'available', label: 'Siap Pakai (Baru+Layak)' },
@@ -474,10 +488,10 @@ watch(period, () => void load())
         <CheckCircle2 v-else :size="18" />
         <p v-if="totalAttentionCount > 0">
           Ada <strong>{{ data.outStockTypes }} barang habis</strong> dan <strong>{{ data.lowStockTypes }} menipis</strong> yang perlu segera dipesan.
-          Total siap pakai saat ini <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> ({{ data.itemTypes }} jenis barang).
+          Saat ini tersedia <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> ({{ availableItemTypes }} jenis tidak habis dari {{ data.itemTypes }} total item).
         </p>
         <p v-else>
-          Semua stok aman! Tersedia <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> siap pakai dari <strong>{{ data.itemTypes }} jenis barang</strong>.
+          Semua stok aman! Tersedia <strong>{{ formatNumber(totalStockAllUnits) }} unit</strong> siap pakai dari <strong>{{ availableItemTypes }} jenis barang</strong>.
         </p>
       </div>
       <button v-if="totalAttentionCount > 0" type="button" class="secondary-button xs" @click="openDashboardHistory('attention')">
@@ -507,12 +521,12 @@ watch(period, () => void load())
       <StatCard
         label="Stok Siap Pakai"
         :value="`${formatNumber(totalStockAllUnits)} unit`"
-        :hint="`${data.itemTypes} jenis barang · Klik lihat daftar`"
+        :hint="`${availableItemTypes} jenis tidak habis · Klik lihat daftar`"
         value-tone="teal"
         :icon="Boxes"
         :flaticon-icon="flaticonAssets.warehouse"
         clickable
-        @click="openDashboardHistory('items')"
+        @click="openDashboardHistory('available')"
       />
       <StatCard
         label="Total Barang Masuk"

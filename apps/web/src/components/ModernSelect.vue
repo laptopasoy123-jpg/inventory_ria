@@ -74,7 +74,7 @@ function updatePosition() {
   const estHeight = Math.min(310, Math.max(120, filteredOptions.value.length * 42 + (showSearch.value ? 52 : 16)))
   const openUp = spaceBelow < estHeight && spaceAbove > spaceBelow
   const maxHeight = Math.max(140, Math.min(320, openUp ? spaceAbove : spaceBelow))
-  const width = Math.min(vw - 20, Math.max(rect.width, 210))
+  const width = Math.min(vw - 20, Math.max(rect.width, 285))
   const left = Math.max(10, Math.min(rect.left, vw - width - 10))
 
   menuStyle.value = openUp
