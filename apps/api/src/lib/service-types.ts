@@ -92,7 +92,7 @@ export interface InventoryService {
   createProcurement(input: ProcurementInput, idempotencyKey: string): Promise<string>
   updateProcurement(id: string, input: ProcurementInput): Promise<string>
   deleteProcurement(id: string): Promise<void>
-  updateProcurementStatus(id: string, status: string): Promise<void>
+  updateProcurementStatus(id: string, status: string, cancelNote?: string): Promise<void>
   createProcurementPayment(input: ProcurementPaymentInput): Promise<string>
   updateProcurementPayment(id: string, input: ProcurementPaymentInput): Promise<string>
   deleteProcurementPayment(id: string): Promise<void>

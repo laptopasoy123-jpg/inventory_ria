@@ -47,6 +47,9 @@ const showCreateModal = ref(false)
 const editingId = ref<string | null>(null)
 const editingCompleted = ref(false)
 const modalSearch = ref('')
+const modalConditionTab = ref<'all' | 'new' | 'used_good' | 'quarantine' | 'damaged'>('all')
+const modalOnlyNonZero = ref(false)
+const detailConditionTab = ref<'all' | 'new' | 'used_good' | 'quarantine' | 'damaged'>('all')
 const saving = ref(false)
 
 interface DraftLine {
@@ -271,10 +274,70 @@ watch([activeTab, search, dateFrom, dateTo, officerFilter, varianceFilter, soSta
   lostPage.value = 1
 })
 
+const conditionGroupsMeta: Array<{
+  key: 'new' | 'used_good' | 'quarantine' | 'damaged'
+  title: string
+  desc: string
+  tone: string
+}> = [
+  { key: 'new', title: 'Stok Baru', desc: 'Barang baru / segel siap pakai', tone: 'new' },
+  { key: 'used_good', title: 'Stok Bekas Layak', desc: 'Barang bekas layak pakai ulang', tone: 'used_good' },
+  { key: 'quarantine', title: 'Stok Karantina', desc: 'Sedang perawatan / pemeriksaan', tone: 'quarantine' },
+  { key: 'damaged', title: 'Stok Rusak', desc: 'Tidak layak pakai / afval', tone: 'damaged' },
+]
+
+function conditionTone(cond: string) {
+  if (cond === 'new') return 'cond-new'
+  if (cond === 'used_good') return 'cond-used'
+  if (cond === 'quarantine') return 'cond-quarantine'
+  return 'cond-damaged'
+}
+
 const filteredDraftLines = computed(() => {
-  if (!modalSearch.value.trim()) return form.lines
-  const q = modalSearch.value.toLowerCase()
-  return form.lines.filter((l) => l.name.toLowerCase().includes(q) || l.code.toLowerCase().includes(q) || l.size.toLowerCase().includes(q))
+  const q = modalSearch.value.trim().toLowerCase()
+  return form.lines.filter((l) => {
+    if (modalConditionTab.value !== 'all' && l.condition !== modalConditionTab.value) return false
+    if (modalOnlyNonZero.value && Number(l.systemQuantity) === 0 && Number(l.physicalQuantity) === 0) return false
+    if (!q) return true
+    return l.name.toLowerCase().includes(q) || l.code.toLowerCase().includes(q) || l.size.toLowerCase().includes(q)
+  })
+})
+
+const groupedDraftSections = computed(() => {
+  return conditionGroupsMeta
+    .map((meta) => {
+      const items = filteredDraftLines.value.filter((l) => l.condition === meta.key)
+      let totalSys = 0
+      let totalPhys = 0
+      let plus = 0
+      let minus = 0
+      for (const it of items) {
+        totalSys += Number(it.systemQuantity || 0)
+        totalPhys += Number(it.physicalQuantity || 0)
+        const d = Number(it.physicalQuantity || 0) - Number(it.systemQuantity || 0)
+        if (d > 0) plus += d
+        else if (d < 0) minus += Math.abs(d)
+      }
+      return { ...meta, items, totalSys, totalPhys, plus, minus }
+    })
+    .filter((sec) => sec.items.length > 0)
+})
+
+const conditionTabCounts = computed(() => {
+  const counts = { all: form.lines.length, new: 0, used_good: 0, quarantine: 0, damaged: 0 }
+  for (const l of form.lines) counts[l.condition] += 1
+  return counts
+})
+
+const filteredDetailSections = computed(() => {
+  const items = activeStocktake.value?.stocktake_items ?? []
+  return conditionGroupsMeta
+    .filter((meta) => detailConditionTab.value === 'all' || detailConditionTab.value === meta.key)
+    .map((meta) => ({
+      ...meta,
+      items: items.filter((it) => it.condition === meta.key),
+    }))
+    .filter((sec) => sec.items.length > 0)
 })
 
 const draftSummary = computed(() => {
@@ -353,6 +416,8 @@ async function openCreateModal() {
   editingId.value = null
   editingCompleted.value = false
   modalSearch.value = ''
+  modalConditionTab.value = 'all'
+  modalOnlyNonZero.value = false
   form.referenceAt = new Date().toISOString().slice(0, 10)
   showCreateModal.value = true
 
@@ -393,6 +458,8 @@ async function openEditModal(st: StocktakeRow) {
   editingId.value = st.id
   editingCompleted.value = st.status === 'completed'
   modalSearch.value = ''
+  modalConditionTab.value = 'all'
+  modalOnlyNonZero.value = false
   form.referenceAt = st.reference_at.slice(0, 10)
   form.officerName = st.officer_name
   showDetailModal.value = false
@@ -513,6 +580,7 @@ async function deleteStocktake(st: StocktakeRow) {
 
 function openDetail(st: StocktakeRow) {
   activeStocktake.value = st
+  detailConditionTab.value = 'all'
   showDetailModal.value = true
 }
 
@@ -749,31 +817,89 @@ onActivated(() => {
           <div><small>Selisih Kurang / Hilang (-)</small><strong class="text-red">-{{ formatNumber(draftSummary.minusUnits) }} ({{ draftSummary.minusCount }} item)</strong></div>
         </div>
 
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Barang &amp; Ukuran</th><th>Kondisi</th><th>Sistem</th><th>Fisik Aktual</th><th>Selisih (+/-)</th><th>Keterangan / Alasan</th></tr></thead>
-            <tbody>
-              <tr v-for="(line, idx) in filteredDraftLines" :key="idx">
-                <td><strong>{{ variantLabel(line) }}</strong><small class="table-sub">{{ line.code }}</small></td>
-                <td>{{ conditionLabel(line.condition) }}</td>
-                <td><strong>{{ formatNumber(line.systemQuantity) }}</strong> {{ line.unit }}</td>
-                <td style="width: 120px;">
-                  <input v-model.number="line.physicalQuantity" type="number" min="0" step="any" class="table-input" />
-                </td>
-                <td>
-                  <span
-                    class="delta-pill"
-                    :class="line.physicalQuantity - line.systemQuantity > 0 ? 'plus' : line.physicalQuantity - line.systemQuantity < 0 ? 'minus' : 'zero'"
+        <div class="so-cond-toolbar">
+          <div class="so-cond-pills">
+            <button type="button" class="so-cond-pill" :class="{ active: modalConditionTab === 'all' }" @click="modalConditionTab = 'all'">
+              Semua Kondisi <span>{{ conditionTabCounts.all }}</span>
+            </button>
+            <button type="button" class="so-cond-pill cond-new" :class="{ active: modalConditionTab === 'new' }" @click="modalConditionTab = 'new'">
+              <i /> Baru <span>{{ conditionTabCounts.new }}</span>
+            </button>
+            <button type="button" class="so-cond-pill cond-used" :class="{ active: modalConditionTab === 'used_good' }" @click="modalConditionTab = 'used_good'">
+              <i /> Bekas Layak <span>{{ conditionTabCounts.used_good }}</span>
+            </button>
+            <button v-if="conditionTabCounts.quarantine > 0" type="button" class="so-cond-pill cond-quarantine" :class="{ active: modalConditionTab === 'quarantine' }" @click="modalConditionTab = 'quarantine'">
+              <i /> Karantina <span>{{ conditionTabCounts.quarantine }}</span>
+            </button>
+            <button v-if="conditionTabCounts.damaged > 0" type="button" class="so-cond-pill cond-damaged" :class="{ active: modalConditionTab === 'damaged' }" @click="modalConditionTab = 'damaged'">
+              <i /> Rusak <span>{{ conditionTabCounts.damaged }}</span>
+            </button>
+          </div>
+          <label class="so-nonzero-toggle">
+            <input v-model="modalOnlyNonZero" type="checkbox" />
+            <span>Hanya yang ada stok / diisi</span>
+          </label>
+        </div>
+
+        <div v-if="!groupedDraftSections.length" class="empty-state compact">
+          <strong>Tidak ada item yang cocok dengan filter pencarian.</strong>
+        </div>
+
+        <div v-else class="so-groups-stack">
+          <section v-for="sec in groupedDraftSections" :key="sec.key" class="so-group-card" :class="`tone-${sec.tone}`">
+            <header class="so-group-head">
+              <div class="so-group-title">
+                <span class="cond-badge" :class="conditionTone(sec.key)">{{ sec.title }}</span>
+                <small>{{ sec.desc }}</small>
+              </div>
+              <div class="so-group-metrics">
+                <span class="tag-pill">{{ sec.items.length }} barang</span>
+                <span class="tag-pill">Sistem: <b>{{ formatNumber(sec.totalSys) }}</b></span>
+                <span class="tag-pill">Fisik: <b>{{ formatNumber(sec.totalPhys) }}</b></span>
+                <span v-if="sec.plus > 0" class="delta-pill plus">+{{ formatNumber(sec.plus) }}</span>
+                <span v-if="sec.minus > 0" class="delta-pill minus">-{{ formatNumber(sec.minus) }}</span>
+              </div>
+            </header>
+            <div class="table-wrap" style="margin-top:0;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Barang &amp; Ukuran</th>
+                    <th>Kondisi</th>
+                    <th>Stok Sistem</th>
+                    <th style="width:130px;">Fisik Aktual</th>
+                    <th>Selisih (+/-)</th>
+                    <th style="min-width:190px;">Keterangan / Alasan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="line in sec.items"
+                    :key="`${line.variantId}-${line.condition}`"
+                    :class="line.physicalQuantity - line.systemQuantity > 0 ? 'so-row-plus' : line.physicalQuantity - line.systemQuantity < 0 ? 'so-row-minus' : ''"
                   >
-                    {{ line.physicalQuantity - line.systemQuantity > 0 ? '+' : '' }}{{ formatNumber(line.physicalQuantity - line.systemQuantity) }}
-                  </span>
-                </td>
-                <td style="min-width: 190px;">
-                  <input v-model="line.reason" class="table-input" placeholder="Mis. hilang / salah hitung" />
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                    <td><strong>{{ variantLabel(line) }}</strong><small class="table-sub">{{ line.code }}</small></td>
+                    <td><span class="cond-badge sm" :class="conditionTone(line.condition)">{{ conditionLabel(line.condition) }}</span></td>
+                    <td><strong>{{ formatNumber(line.systemQuantity) }}</strong> <small>{{ line.unit }}</small></td>
+                    <td>
+                      <input v-model.number="line.physicalQuantity" type="number" min="0" step="any" class="table-input so-qty-input" />
+                    </td>
+                    <td>
+                      <span
+                        class="delta-pill"
+                        :class="line.physicalQuantity - line.systemQuantity > 0 ? 'plus' : line.physicalQuantity - line.systemQuantity < 0 ? 'minus' : 'zero'"
+                      >
+                        {{ line.physicalQuantity - line.systemQuantity > 0 ? '+' : '' }}{{ formatNumber(line.physicalQuantity - line.systemQuantity) }}
+                      </span>
+                    </td>
+                    <td>
+                      <input v-model="line.reason" class="table-input" placeholder="Mis. hilang / salah hitung" />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -803,27 +929,49 @@ onActivated(() => {
           <div><small>Kurang / Hilang (-)</small><strong class="text-red">-{{ formatNumber(varianceSummary(activeStocktake).minus) }}</strong></div>
         </div>
 
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Barang</th><th>Kondisi</th><th>Sistem</th><th>Fisik</th><th>Selisih (+/-)</th><th>Alasan</th></tr></thead>
-            <tbody>
-              <tr v-for="it in activeStocktake.stocktake_items" :key="it.id">
-                <td><strong>{{ variantLabel({ name: it.item_variants?.items?.name, size: it.item_variants?.size }) }}</strong></td>
-                <td>{{ conditionLabel(it.condition) }}</td>
-                <td>{{ formatNumber(it.system_quantity) }}</td>
-                <td>{{ formatNumber(it.physical_quantity) }}</td>
-                <td>
-                  <span
-                    class="delta-pill"
-                    :class="it.physical_quantity - it.system_quantity > 0 ? 'plus' : it.physical_quantity - it.system_quantity < 0 ? 'minus' : 'zero'"
+        <div class="so-cond-pills">
+          <button type="button" class="so-cond-pill" :class="{ active: detailConditionTab === 'all' }" @click="detailConditionTab = 'all'">Semua Kondisi</button>
+          <button type="button" class="so-cond-pill cond-new" :class="{ active: detailConditionTab === 'new' }" @click="detailConditionTab = 'new'"><i /> Baru</button>
+          <button type="button" class="so-cond-pill cond-used" :class="{ active: detailConditionTab === 'used_good' }" @click="detailConditionTab = 'used_good'"><i /> Bekas Layak</button>
+          <button type="button" class="so-cond-pill cond-quarantine" :class="{ active: detailConditionTab === 'quarantine' }" @click="detailConditionTab = 'quarantine'"><i /> Karantina</button>
+          <button type="button" class="so-cond-pill cond-damaged" :class="{ active: detailConditionTab === 'damaged' }" @click="detailConditionTab = 'damaged'"><i /> Rusak</button>
+        </div>
+
+        <div class="so-groups-stack">
+          <section v-for="sec in filteredDetailSections" :key="sec.key" class="so-group-card" :class="`tone-${sec.tone}`">
+            <header class="so-group-head">
+              <div class="so-group-title">
+                <span class="cond-badge" :class="conditionTone(sec.key)">{{ sec.title }}</span>
+                <small>{{ sec.items.length }} barang</small>
+              </div>
+            </header>
+            <div class="table-wrap" style="margin-top:0;">
+              <table>
+                <thead><tr><th>Barang</th><th>Kondisi</th><th>Sistem</th><th>Fisik</th><th>Selisih (+/-)</th><th>Alasan</th></tr></thead>
+                <tbody>
+                  <tr
+                    v-for="it in sec.items"
+                    :key="it.id"
+                    :class="it.physical_quantity - it.system_quantity > 0 ? 'so-row-plus' : it.physical_quantity - it.system_quantity < 0 ? 'so-row-minus' : ''"
                   >
-                    {{ it.physical_quantity - it.system_quantity > 0 ? '+' : '' }}{{ formatNumber(it.physical_quantity - it.system_quantity) }}
-                  </span>
-                </td>
-                <td>{{ it.reason || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
+                    <td><strong>{{ variantLabel({ name: it.item_variants?.items?.name, size: it.item_variants?.size }) }}</strong></td>
+                    <td><span class="cond-badge sm" :class="conditionTone(it.condition)">{{ conditionLabel(it.condition) }}</span></td>
+                    <td>{{ formatNumber(it.system_quantity) }}</td>
+                    <td><strong>{{ formatNumber(it.physical_quantity) }}</strong></td>
+                    <td>
+                      <span
+                        class="delta-pill"
+                        :class="it.physical_quantity - it.system_quantity > 0 ? 'plus' : it.physical_quantity - it.system_quantity < 0 ? 'minus' : 'zero'"
+                      >
+                        {{ it.physical_quantity - it.system_quantity > 0 ? '+' : '' }}{{ formatNumber(it.physical_quantity - it.system_quantity) }}
+                      </span>
+                    </td>
+                    <td>{{ it.reason || '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </div>
       <template #footer>

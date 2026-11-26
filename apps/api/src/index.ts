@@ -52,7 +52,13 @@ app.notFound((c) => c.json({ message: 'Endpoint tidak ditemukan' }, 404))
 app.onError((error, c) => {
   console.error(error)
   if (error instanceof HTTPException) return c.json({ message: error.message }, error.status)
-  const message = error instanceof Error ? error.message : 'Terjadi kesalahan pada server'
+  const rawErr = error as { message?: unknown } | null
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof rawErr?.message === 'string' && rawErr.message
+        ? rawErr.message
+        : 'Terjadi kesalahan pada server'
   const status = /duplicate key/i.test(message) ? 409 : /stock|stok|saldo|sisa|melebihi/i.test(message) ? 422 : 500
   return c.json({ message }, status)
 })

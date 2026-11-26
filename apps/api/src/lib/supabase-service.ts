@@ -27,6 +27,83 @@ export class SupabaseInventoryService implements InventoryService {
     return data?.id ?? null
   }
 
+  private toErr(error: unknown, fallback = 'Terjadi kesalahan database'): Error {
+    if (error instanceof Error) return error
+    const e = error as { message?: string; details?: string } | null
+    return new Error(e?.message || e?.details || fallback)
+  }
+
+  private async getCurrentBalance(variantId: string, condition: string): Promise<number> {
+    const { data, error } = await this.db
+      .from('stock_balances')
+      .select('quantity')
+      .eq('variant_id', variantId)
+      .eq('condition', condition)
+      .maybeSingle()
+    if (error) throw this.toErr(error)
+    return Number(data?.quantity ?? 0)
+  }
+
+  private async applyStockMovementDirect(
+    variantId: string,
+    condition: string,
+    delta: number,
+    movementType: string,
+    referenceType: string,
+    referenceId: string,
+    actorId: string | null,
+    notes: string | null,
+    occurredAt: string = new Date().toISOString(),
+  ): Promise<number> {
+    if (delta === 0) return this.getCurrentBalance(variantId, condition)
+    const currentQty = await this.getCurrentBalance(variantId, condition)
+    const nextQty = currentQty + delta
+    if (nextQty < 0) {
+      throw new Error(`Stok tidak mencukupi. Stok saat ini ${currentQty}, perubahan ${delta}`)
+    }
+
+    const { error: upsErr } = await this.db
+      .from('stock_balances')
+      .upsert(
+        { variant_id: variantId, condition, quantity: nextQty, updated_at: new Date().toISOString() },
+        { onConflict: 'variant_id,condition' },
+      )
+    if (upsErr) throw this.toErr(upsErr)
+
+    const { error: movErr } = await this.db.from('stock_movements').insert({
+      variant_id: variantId,
+      condition,
+      quantity_delta: delta,
+      balance_after: nextQty,
+      movement_type: movementType,
+      reference_type: referenceType,
+      reference_id: referenceId,
+      notes,
+      occurred_at: occurredAt,
+      created_by: actorId,
+    })
+    if (movErr) throw this.toErr(movErr)
+    return nextQty
+  }
+
+  private async nextStocktakeNo(): Promise<string> {
+    const now = new Date()
+    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    const prefix = `SO-${ym}-`
+    const { data } = await this.db
+      .from('stocktakes')
+      .select('stocktake_no')
+      .ilike('stocktake_no', `${prefix}%`)
+      .order('stocktake_no', { ascending: false })
+      .limit(20)
+    let maxSeq = 0
+    for (const row of data ?? []) {
+      const m = String(row.stocktake_no || '').match(/(\d+)$/)
+      if (m) maxSeq = Math.max(maxSeq, Number(m[1]))
+    }
+    return `${prefix}${String(maxSeq + 1).padStart(5, '0')}`
+  }
+
   async getDashboard(month: number, year: number, period: 'all' | 'year' | 'month' = 'all'): Promise<Record<string, unknown>> {
     const [rpcRes, procsRes, unpaidRes, movRes] = await Promise.all([
       this.db.rpc('dashboard_summary', { p_month: month, p_year: year }),
@@ -300,11 +377,32 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteOpeningStock(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_opening_stock', {
-      p_id: id,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
+    const actorId = await this.resolveActorId()
+    const { data: opRow, error: fetchErr } = await this.db
+      .from('opening_stocks')
+      .select('id, transaction_no, opening_stock_items(variant_id, condition, quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!opRow) throw new Error('Data stok awal tidak ditemukan')
+
+    const items = (opRow.opening_stock_items ?? []) as Array<{ variant_id: string; condition: string; quantity: number }>
+    for (const line of items) {
+      await this.applyStockMovementDirect(
+        line.variant_id,
+        line.condition,
+        -Number(line.quantity),
+        'opening_stock',
+        'opening_stock',
+        id,
+        actorId,
+        `Hapus stok awal ${opRow.transaction_no}`,
+      )
+    }
+    const { error: delItemsErr } = await this.db.from('opening_stock_items').delete().eq('opening_stock_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+    const { error: delErr } = await this.db.from('opening_stocks').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
   }
 
   async transferCondition(input: ConditionTransferInput): Promise<string> {
@@ -395,23 +493,39 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteProcurement(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_procurement', { p_id: id })
-    if (error) throw error
+    const { data: procItems } = await this.db.from('procurement_items').select('id').eq('procurement_id', id)
+    const itemIds = (procItems ?? []).map((x: { id: string }) => x.id)
+    if (itemIds.length) {
+      await this.db.from('purchase_items').update({ procurement_item_id: null }).in('procurement_item_id', itemIds)
+    }
+    await this.db.from('purchases').update({ procurement_id: null }).eq('procurement_id', id)
+    await this.db.from('procurement_payments').delete().eq('procurement_id', id)
+    await this.db.from('procurement_items').delete().eq('procurement_id', id)
+    const { error } = await this.db.from('procurements').delete().eq('id', id)
+    if (error) throw this.toErr(error)
   }
 
-  async updateProcurementStatus(id: string, status: string) {
-    if (status === 'cancelled') {
-      const { data: proc } = await this.db
-        .from('procurements')
-        .select('status')
-        .eq('id', id)
-        .maybeSingle()
-      if (proc?.status === 'completed') {
-        throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
-      }
+  async updateProcurementStatus(id: string, status: string, cancelNote?: string) {
+    const { data: proc, error: fetchErr } = await this.db
+      .from('procurements')
+      .select('status, notes')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!proc) throw new Error('Pengadaan tidak ditemukan')
+
+    if (status === 'cancelled' && proc.status === 'completed') {
+      throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
     }
-    const { error } = await this.db.from('procurements').update({ status }).eq('id', id)
-    if (error) throw error
+
+    const updatePayload: Record<string, unknown> = { status }
+    if (status === 'cancelled' && cancelNote?.trim()) {
+      const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
+      updatePayload.notes = proc.notes ? `${proc.notes} · ${tag}` : tag
+    }
+
+    const { error } = await this.db.from('procurements').update(updatePayload).eq('id', id)
+    if (error) throw this.toErr(error)
   }
 
   async createProcurementPayment(input: ProcurementPaymentInput): Promise<string> {
@@ -434,8 +548,35 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteProcurementPayment(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_procurement_payment', { p_id: id })
-    if (error) throw error
+    const { data: pay, error: fetchErr } = await this.db
+      .from('procurement_payments')
+      .select('id, procurement_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!pay) throw new Error('Data pembayaran tidak ditemukan')
+
+    const { error: delErr } = await this.db.from('procurement_payments').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
+
+    const [{ data: proc }, { data: remainingPays }] = await Promise.all([
+      this.db.from('procurements').select('id, total_amount, funding_source').eq('id', pay.procurement_id).maybeSingle(),
+      this.db.from('procurement_payments').select('amount, payment_type').eq('procurement_id', pay.procurement_id),
+    ])
+    if (proc) {
+      const list = (remainingPays ?? []) as Array<{ amount: number; payment_type: string }>
+      const newPaid = list.filter((x) => x.payment_type !== 'reimbursement').reduce((s, x) => s + Number(x.amount), 0)
+      const newReimb = list.filter((x) => x.payment_type === 'reimbursement').reduce((s, x) => s + Number(x.amount), 0)
+      const total = Number(proc.total_amount || 0)
+      const paymentStatus = newPaid >= total && total > 0 ? 'paid' : newPaid > 0 ? 'partial' : 'unpaid'
+      const reimbStatus = proc.funding_source === 'advanced'
+        ? (newReimb >= total ? 'paid' : newReimb > 0 ? 'partially_paid' : 'not_submitted')
+        : null
+      await this.db
+        .from('procurements')
+        .update({ paid_amount: newPaid, payment_status: paymentStatus, reimbursement_status: reimbStatus })
+        .eq('id', proc.id)
+    }
   }
 
   async listPayments() {
@@ -481,11 +622,63 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deletePurchaseReceipt(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_purchase_receipt', {
-      p_id: id,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
+    const actorId = await this.resolveActorId()
+    const { data: purRow, error: fetchErr } = await this.db
+      .from('purchases')
+      .select('id, transaction_no, procurement_id, purchase_items(id, variant_id, condition, quantity, procurement_item_id)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!purRow) throw new Error('Transaksi barang masuk tidak ditemukan')
+
+    const items = (purRow.purchase_items ?? []) as Array<{
+      id: string; variant_id: string; condition: string; quantity: number; procurement_item_id: string | null
+    }>
+    for (const line of items) {
+      await this.applyStockMovementDirect(
+        line.variant_id,
+        line.condition,
+        -Number(line.quantity),
+        'receipt',
+        'purchase',
+        id,
+        actorId,
+        `Hapus barang masuk ${purRow.transaction_no}`,
+      )
+      if (line.procurement_item_id) {
+        const { data: pi } = await this.db
+          .from('procurement_items')
+          .select('received_quantity')
+          .eq('id', line.procurement_item_id)
+          .maybeSingle()
+        if (pi) {
+          await this.db
+            .from('procurement_items')
+            .update({ received_quantity: Math.max(0, Number(pi.received_quantity || 0) - Number(line.quantity)) })
+            .eq('id', line.procurement_item_id)
+        }
+      }
+    }
+
+    await this.db.from('reimbursements').delete().eq('purchase_id', id)
+    const { error: delItemsErr } = await this.db.from('purchase_items').delete().eq('purchase_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+    const { error: delErr } = await this.db.from('purchases').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
+
+    if (purRow.procurement_id) {
+      const [{ data: proc }, { data: procItems }] = await Promise.all([
+        this.db.from('procurements').select('id, status').eq('id', purRow.procurement_id).maybeSingle(),
+        this.db.from('procurement_items').select('ordered_quantity, received_quantity').eq('procurement_id', purRow.procurement_id),
+      ])
+      if (proc && proc.status !== 'cancelled') {
+        const list = (procItems ?? []) as Array<{ ordered_quantity: number; received_quantity: number }>
+        const totalOrd = list.reduce((s, x) => s + Number(x.ordered_quantity || 0), 0)
+        const totalRec = list.reduce((s, x) => s + Number(x.received_quantity || 0), 0)
+        const nextStatus = totalRec >= totalOrd && totalOrd > 0 ? 'completed' : totalRec > 0 ? 'partial' : 'ordered'
+        await this.db.from('procurements').update({ status: nextStatus }).eq('id', proc.id)
+      }
+    }
   }
 
   async listIssuances({ search, employeeId }: { search?: string; employeeId?: string }) {
@@ -530,11 +723,39 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteIssuance(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_issuance', {
-      p_id: id,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
+    const actorId = await this.resolveActorId()
+    const { data: issRow, error: fetchErr } = await this.db
+      .from('issuances')
+      .select('id, transaction_no, issuance_items(id, variant_id, condition, quantity, returned_quantity, resolved_lost_quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!issRow) throw new Error('Transaksi barang keluar tidak ditemukan')
+
+    const items = (issRow.issuance_items ?? []) as Array<{
+      id: string; variant_id: string; condition: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number
+    }>
+    if (items.some((it) => Number(it.returned_quantity || 0) > 0 || Number(it.resolved_lost_quantity || 0) > 0)) {
+      throw new Error('Barang keluar yang sudah memiliki catatan pengembalian tidak dapat dihapus. Hapus data pengembalian terkait terlebih dahulu.')
+    }
+
+    for (const line of items) {
+      await this.applyStockMovementDirect(
+        line.variant_id,
+        line.condition,
+        Number(line.quantity),
+        'issuance',
+        'issuance',
+        id,
+        actorId,
+        `Hapus barang keluar ${issRow.transaction_no}`,
+      )
+    }
+
+    const { error: delItemsErr } = await this.db.from('issuance_items').delete().eq('issuance_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+    const { error: delErr } = await this.db.from('issuances').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
   }
 
   async listReturns({ result, search }: { result?: string; search?: string }) {
@@ -572,11 +793,66 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteReturn(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_return', {
-      p_id: id,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
+    const actorId = await this.resolveActorId()
+    const { data: retRow, error: fetchErr } = await this.db
+      .from('returns')
+      .select('id, transaction_no, return_items(id, issuance_item_id, quantity, result, reusable)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!retRow) throw new Error('Transaksi pengembalian tidak ditemukan')
+
+    const items = (retRow.return_items ?? []) as Array<{
+      id: string; issuance_item_id: string; quantity: number; result: string; reusable?: boolean
+    }>
+    for (const old of items) {
+      const { data: issueLine } = await this.db
+        .from('issuance_items')
+        .select('id, variant_id, returned_quantity, resolved_lost_quantity')
+        .eq('id', old.issuance_item_id)
+        .maybeSingle()
+      if (!issueLine) continue
+
+      const qty = Number(old.quantity)
+      if (old.result === 'lost') {
+        await this.db
+          .from('issuance_items')
+          .update({ resolved_lost_quantity: Math.max(0, Number(issueLine.resolved_lost_quantity || 0) - qty) })
+          .eq('id', issueLine.id)
+      } else {
+        await this.db
+          .from('issuance_items')
+          .update({ returned_quantity: Math.max(0, Number(issueLine.returned_quantity || 0) - qty) })
+          .eq('id', issueLine.id)
+
+        const targetCond =
+          old.result === 'used_good' ? 'used_good'
+            : old.result === 'maintenance' ? 'quarantine'
+              : old.result === 'damaged' && old.reusable ? 'used_good'
+                : null
+        if (targetCond) {
+          const cur = await this.getCurrentBalance(issueLine.variant_id, targetCond)
+          const delta = -Math.min(cur, qty)
+          if (delta !== 0) {
+            await this.applyStockMovementDirect(
+              issueLine.variant_id,
+              targetCond,
+              delta,
+              'return',
+              'return',
+              id,
+              actorId,
+              `Hapus pengembalian ${retRow.transaction_no}`,
+            )
+          }
+        }
+      }
+    }
+
+    const { error: delItemsErr } = await this.db.from('return_items').delete().eq('return_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+    const { error: delErr } = await this.db.from('returns').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
   }
 
   async listStocktakes({ status }: { status?: string }) {
@@ -587,54 +863,267 @@ export class SupabaseInventoryService implements InventoryService {
       .limit(100)
     if (status && status !== 'all') query = query.eq('status', status)
     const { data, error } = await query
-    if (error) throw error
+    if (error) throw this.toErr(error)
     return data ?? []
   }
 
-  private normalizeStocktakePayload(input: StocktakeCreateInput) {
+  private normalizeReferenceAt(refInput?: Date | string): string {
     const now = new Date()
-    const refDate = input.referenceAt ? new Date(input.referenceAt) : now
-    const refDatePart = refDate.toISOString().slice(0, 10)
+    if (!refInput) return now.toISOString()
+    const d = new Date(refInput)
+    if (Number.isNaN(d.getTime())) return now.toISOString()
+    const refDatePart = d.toISOString().slice(0, 10)
     const todayUtc = now.toISOString().slice(0, 10)
     const todayWib = new Date(now.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10)
-    const referenceAt = refDatePart === todayUtc || refDatePart === todayWib ? now.toISOString() : refDate.toISOString()
-    return { ...input, referenceAt }
+    return refDatePart === todayUtc || refDatePart === todayWib ? now.toISOString() : d.toISOString()
   }
 
   async createStocktake(input: StocktakeCreateInput): Promise<string> {
-    const { data, error } = await this.db.rpc('create_stocktake', {
-      p_payload: this.normalizeStocktakePayload(input),
-      p_actor: await this.resolveActorId(),
+    const actorId = await this.resolveActorId()
+    const nowIso = new Date().toISOString()
+    const stocktakeNo = await this.nextStocktakeNo()
+    const refTs = this.normalizeReferenceAt(input.referenceAt)
+
+    const { data: stRow, error: insErr } = await this.db
+      .from('stocktakes')
+      .insert({
+        stocktake_no: stocktakeNo,
+        reference_at: refTs,
+        officer_name: input.officerName,
+        status: input.finalizeNow ? 'completed' : 'pending_review',
+        submitted_at: nowIso,
+        finalized_at: input.finalizeNow ? nowIso : null,
+        finalized_by: input.finalizeNow ? actorId : null,
+        created_by: actorId,
+      })
+      .select('id')
+      .single()
+    if (insErr) throw this.toErr(insErr)
+    const stId = String(stRow.id)
+
+    const { data: allBalances, error: balErr } = await this.db
+      .from('stock_balances')
+      .select('variant_id, condition, quantity')
+    if (balErr) throw this.toErr(balErr)
+    const balMap = new Map<string, number>()
+    for (const b of allBalances ?? []) {
+      balMap.set(`${b.variant_id}:${b.condition}`, Number(b.quantity ?? 0))
+    }
+
+    const itemRows = input.items.map((line) => {
+      const sysQty = balMap.get(`${line.variantId}:${line.condition}`) ?? 0
+      const physQty = Number(line.physicalQuantity)
+      return {
+        stocktake_id: stId,
+        variant_id: line.variantId,
+        condition: line.condition,
+        system_quantity: sysQty,
+        physical_quantity: physQty,
+        reason: line.reason || null,
+        adjustment_quantity: physQty - sysQty,
+      }
     })
-    if (error) throw error
-    return data as string
+
+    const { error: itemsErr } = await this.db.from('stocktake_items').insert(itemRows)
+    if (itemsErr) throw this.toErr(itemsErr)
+
+    if (input.finalizeNow) {
+      for (const row of itemRows) {
+        if (row.adjustment_quantity !== 0) {
+          await this.applyStockMovementDirect(
+            row.variant_id,
+            row.condition,
+            row.adjustment_quantity,
+            'stocktake_adjustment',
+            'stocktake',
+            stId,
+            actorId,
+            row.reason || `Penyesuaian ${stocktakeNo}`,
+            nowIso,
+          )
+        }
+      }
+    }
+
+    return stId
   }
 
   async updateStocktake(id: string, input: StocktakeCreateInput): Promise<string> {
-    const { data, error } = await this.db.rpc('update_stocktake', {
-      p_id: id,
-      p_payload: this.normalizeStocktakePayload(input),
-      p_actor: await this.resolveActorId(),
+    const actorId = await this.resolveActorId()
+    const nowIso = new Date().toISOString()
+    const { data: stRow, error: fetchErr } = await this.db
+      .from('stocktakes')
+      .select('id, stocktake_no, status, reference_at, stocktake_items(variant_id, condition, system_quantity, physical_quantity, adjustment_quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!stRow) throw new Error('Stok opname tidak ditemukan')
+
+    const wasCompleted = stRow.status === 'completed'
+    const shouldApplyStock = wasCompleted || Boolean(input.finalizeNow)
+    const refTs = input.referenceAt ? this.normalizeReferenceAt(input.referenceAt) : stRow.reference_at
+
+    const { data: allBalances, error: balErr } = await this.db
+      .from('stock_balances')
+      .select('variant_id, condition, quantity')
+    if (balErr) throw this.toErr(balErr)
+    const balMap = new Map<string, number>()
+    for (const b of allBalances ?? []) {
+      balMap.set(`${b.variant_id}:${b.condition}`, Number(b.quantity ?? 0))
+    }
+
+    const oldMap = new Map<string, { system_quantity: number; adjustment_quantity: number }>()
+    for (const old of (stRow.stocktake_items ?? []) as Array<{ variant_id: string; condition: string; system_quantity: number; adjustment_quantity: number | null }>) {
+      oldMap.set(`${old.variant_id}:${old.condition}`, {
+        system_quantity: Number(old.system_quantity ?? 0),
+        adjustment_quantity: Number(old.adjustment_quantity ?? 0),
+      })
+    }
+
+    const { error: updErr } = await this.db
+      .from('stocktakes')
+      .update({
+        officer_name: input.officerName,
+        reference_at: refTs,
+        status: shouldApplyStock ? 'completed' : stRow.status,
+        finalized_at: shouldApplyStock ? nowIso : null,
+        finalized_by: shouldApplyStock ? actorId : null,
+      })
+      .eq('id', id)
+    if (updErr) throw this.toErr(updErr)
+
+    const { error: delItemsErr } = await this.db.from('stocktake_items').delete().eq('stocktake_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+
+    const nextRows = input.items.map((line) => {
+      const key = `${line.variantId}:${line.condition}`
+      const curBal = balMap.get(key) ?? 0
+      const oldRec = oldMap.get(key)
+      const physQty = Number(line.physicalQuantity)
+      // Preserve pre-SO baseline for variance reporting when editing a completed SO
+      const sysQty = wasCompleted && oldRec ? oldRec.system_quantity : curBal
+      return {
+        stocktake_id: id,
+        variant_id: line.variantId,
+        condition: line.condition,
+        system_quantity: sysQty,
+        physical_quantity: physQty,
+        reason: line.reason || null,
+        adjustment_quantity: physQty - sysQty,
+        _deltaToApply: physQty - curBal,
+      }
     })
-    if (error) throw error
-    return data as string
+
+    const { error: insItemsErr } = await this.db
+      .from('stocktake_items')
+      .insert(nextRows.map(({ _deltaToApply: _, ...dbRow }) => dbRow))
+    if (insItemsErr) throw this.toErr(insItemsErr)
+
+    if (shouldApplyStock) {
+      for (const row of nextRows) {
+        if (row._deltaToApply !== 0) {
+          await this.applyStockMovementDirect(
+            row.variant_id,
+            row.condition,
+            row._deltaToApply,
+            'stocktake_adjustment',
+            'stocktake',
+            id,
+            actorId,
+            row.reason || `Revisi ${stRow.stocktake_no}`,
+            nowIso,
+          )
+        }
+      }
+    }
+
+    return id
   }
 
   async deleteStocktake(id: string): Promise<void> {
-    const { error } = await this.db.rpc('delete_stocktake', {
-      p_id: id,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
+    const actorId = await this.resolveActorId()
+    const { data: stRow, error: fetchErr } = await this.db
+      .from('stocktakes')
+      .select('id, stocktake_no, status, stocktake_items(variant_id, condition, adjustment_quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!stRow) throw new Error('Stok opname tidak ditemukan')
+
+    if (stRow.status === 'completed') {
+      const items = (stRow.stocktake_items ?? []) as Array<{
+        variant_id: string; condition: string; adjustment_quantity: number | null
+      }>
+      for (const old of items) {
+        const adj = Number(old.adjustment_quantity ?? 0)
+        if (adj === 0) continue
+        const curBal = await this.getCurrentBalance(old.variant_id, old.condition)
+        let reverseDelta = -adj
+        if (curBal + reverseDelta < 0) reverseDelta = -curBal
+        if (reverseDelta !== 0) {
+          await this.applyStockMovementDirect(
+            old.variant_id,
+            old.condition,
+            reverseDelta,
+            'stocktake_adjustment',
+            'stocktake',
+            id,
+            actorId,
+            `Hapus ${stRow.stocktake_no} (pembalikan stok)`,
+          )
+        }
+      }
+    }
+
+    const { error: delItemsErr } = await this.db.from('stocktake_items').delete().eq('stocktake_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+    const { error: delErr } = await this.db.from('stocktakes').delete().eq('id', id)
+    if (delErr) throw this.toErr(delErr)
   }
 
   async finalizeStocktake(stocktakeId: string): Promise<string> {
-    const { data, error } = await this.db.rpc('finalize_stocktake', {
-      p_stocktake_id: stocktakeId,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
-    return data as string
+    const actorId = await this.resolveActorId()
+    const nowIso = new Date().toISOString()
+    const { data: stRow, error: fetchErr } = await this.db
+      .from('stocktakes')
+      .select('id, stocktake_no, status, stocktake_items(id, variant_id, condition, physical_quantity, reason)')
+      .eq('id', stocktakeId)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!stRow) throw new Error('Stok opname tidak ditemukan')
+    if (stRow.status === 'completed') throw new Error('Stok opname sudah difinalisasi')
+
+    const items = (stRow.stocktake_items ?? []) as Array<{
+      id: string; variant_id: string; condition: string; physical_quantity: number; reason: string | null
+    }>
+    for (const line of items) {
+      const curQty = await this.getCurrentBalance(line.variant_id, line.condition)
+      const adjustment = Number(line.physical_quantity) - curQty
+      if (adjustment !== 0) {
+        await this.applyStockMovementDirect(
+          line.variant_id,
+          line.condition,
+          adjustment,
+          'stocktake_adjustment',
+          'stocktake',
+          stocktakeId,
+          actorId,
+          line.reason || `Penyesuaian ${stRow.stocktake_no}`,
+          nowIso,
+        )
+      }
+      await this.db
+        .from('stocktake_items')
+        .update({ system_quantity: curQty, adjustment_quantity: adjustment })
+        .eq('id', line.id)
+    }
+
+    const { error: updErr } = await this.db
+      .from('stocktakes')
+      .update({ status: 'completed', finalized_at: nowIso, finalized_by: actorId })
+      .eq('id', stocktakeId)
+    if (updErr) throw this.toErr(updErr)
+    return stocktakeId
   }
 
   async createReimbursement(input: ReimbursementInput): Promise<string> {

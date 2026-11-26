@@ -920,7 +920,7 @@ export class LocalInventoryService implements InventoryService {
     return id
   }
 
-  async updateProcurementStatus(id: string, status: string) {
+  async updateProcurementStatus(id: string, status: string, cancelNote?: string) {
     const state = await this.load()
     const proc = state.procurements.find((p) => p.id === id)
     if (!proc) throw new Error('Pengadaan tidak ditemukan')
@@ -928,6 +928,10 @@ export class LocalInventoryService implements InventoryService {
       throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
     }
     proc.status = status as LocalState['procurements'][number]['status']
+    if (status === 'cancelled' && cancelNote?.trim()) {
+      const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
+      proc.notes = proc.notes ? `${proc.notes} · ${tag}` : tag
+    }
     await this.save(state)
   }
 

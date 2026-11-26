@@ -97,6 +97,12 @@ const loadingDetail = ref(false)
 const showReceiptModal = ref(false)
 const receiptProcId = ref<string | null>(null)
 
+// Cancel with Note Confirmation Modal
+const showCancelModal = ref(false)
+const cancellingRow = ref<ProcurementRow | null>(null)
+const cancelNote = ref('')
+const cancelling = ref(false)
+
 const sortDir = ref<'desc' | 'asc'>('desc')
 
 const supplierFilterOptions = computed(() => {
@@ -471,22 +477,37 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'completed') {
   }
 }
 
-async function cancelProcurement(row: ProcurementRow) {
+function cancelProcurement(row: ProcurementRow) {
   if (row.status === 'completed' || row.status === 'cancelled') return
-  const msg = Number(row.total_received) > 0
-    ? `Batalkan sisa pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Barang yang sudah diterima (${formatNumber(row.total_received)} unit) tetap tersimpan di stok gudang, dan sisa pesanan dihentikan.`
-    : `Batalkan pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Nomor PO tidak akan tampil lagi di Barang Masuk.`
-  if (!window.confirm(msg)) return
+  cancellingRow.value = row
+  cancelNote.value = ''
+  showCancelModal.value = true
+}
+
+async function confirmCancelProcurement() {
+  const row = cancellingRow.value
+  if (!row) return
+  if (!cancelNote.value.trim()) {
+    toast.error('Keterangan / alasan pembatalan wajib diisi')
+    return
+  }
+  cancelling.value = true
   try {
     await api(`/api/procurements/${row.id}/status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status: 'cancelled' }),
+      body: JSON.stringify({
+        status: 'cancelled',
+        cancelNote: cancelNote.value.trim(),
+      }),
     })
+    showCancelModal.value = false
     showDetailModal.value = false
     toast.success(`Pengadaan ${row.procurement_no} berhasil dibatalkan`, 'Pengadaan Dibatalkan')
     await load()
   } catch (e) {
     toast.error(e instanceof Error ? e.message : 'Gagal membatalkan pengadaan')
+  } finally {
+    cancelling.value = false
   }
 }
 
@@ -607,6 +628,9 @@ onActivated(() => {
                   <strong class="table-main">{{ row.supplier_name }}</strong>
                 </div>
                 <small class="table-sub">{{ row.department_name || 'Umum' }} · {{ row.reason }}</small>
+                <small v-if="row.status === 'cancelled' && row.notes" class="table-sub" style="color:#b92b27;font-weight:600;">
+                  {{ row.notes }}
+                </small>
               </td>
               <td>
                 <div class="compact-items">
@@ -801,6 +825,9 @@ onActivated(() => {
           <div><small>Progress Barang</small><strong>{{ detail.progress_percent }}% ({{ detail.total_received }}/{{ detail.total_ordered }})</strong></div>
           <div><small>Total Nilai Pengadaan</small><strong>{{ formatCurrency(detail.total_amount) }}</strong></div>
         </div>
+        <div v-if="detail.notes" class="inline-alert" :style="detail.status === 'cancelled' ? 'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;margin:0;' : 'margin:0;'">
+          <strong>Catatan / Keterangan:</strong> {{ detail.notes }}
+        </div>
 
         <div class="detail-section">
           <h4>Item Pengadaan & Sisa Belum Datang</h4>
@@ -841,6 +868,52 @@ onActivated(() => {
         </button>
         <button v-if="detail && (detail.status === 'ordered' || detail.status === 'partial')" type="button" class="primary-button" @click="showDetailModal = false; openReceiveFor(detail.id)">
           <PackageCheck :size="16" /> Terima Barang Datang
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Cancel Procurement Confirmation Modal with Note -->
+    <BaseModal
+      :open="showCancelModal"
+      :title="`Cancel Pengadaan · ${cancellingRow?.procurement_no || ''}`"
+      eyebrow="Konfirmasi Pembatalan Pengadaan"
+      subtitle="Masukkan alasan atau keterangan pembatalan agar tercatat rapi dalam riwayat pengadaan."
+      size="sm"
+      @close="showCancelModal = false"
+    >
+      <form v-if="cancellingRow" id="cancel-proc-form" class="modal-form" @submit.prevent="confirmCancelProcurement">
+        <div class="summary-banner" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+          <div>
+            <small>Dokumen &amp; PO</small>
+            <strong>{{ cancellingRow.procurement_no }}{{ cancellingRow.po_number ? ` · ${cancellingRow.po_number}` : '' }}</strong>
+          </div>
+          <div>
+            <small>Supplier / Progress</small>
+            <strong>{{ cancellingRow.supplier_name }} ({{ cancellingRow.progress_percent }}%)</strong>
+          </div>
+        </div>
+
+        <div v-if="Number(cancellingRow.total_received) > 0" class="inline-alert" style="margin:0;">
+          <span>
+            Sudah ada <strong>{{ formatNumber(cancellingRow.total_received) }} unit</strong> barang yang diterima.
+            Barang yang sudah masuk tetap aman di stok gudang, dan sisa pesanan ({{ formatNumber(Math.max(0, Number(cancellingRow.total_ordered) - Number(cancellingRow.total_received))) }} unit) akan dihentikan.
+          </span>
+        </div>
+
+        <label class="field">
+          <span>Alasan / Keterangan Pembatalan *</span>
+          <textarea
+            v-model="cancelNote"
+            rows="3"
+            required
+            placeholder="Contoh: Supplier kehabisan stok / proyek dibatalkan / ganti vendor..."
+          />
+        </label>
+      </form>
+      <template #footer>
+        <button type="button" class="secondary-button" :disabled="cancelling" @click="showCancelModal = false">Kembali</button>
+        <button type="submit" form="cancel-proc-form" class="secondary-button danger-soft" :disabled="cancelling || !cancelNote.trim()">
+          <XCircle :size="15" /> {{ cancelling ? 'Membatalkan...' : 'Konfirmasi Cancel Pengadaan' }}
         </button>
       </template>
     </BaseModal>

@@ -1777,3 +1777,171 @@ tbody tr:hover {
     display: none !important;
   }
 }
+
+
+/* Stocktake Condition Grouping & Color-Coded Badges */
+.so-cond-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.so-cond-pills {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.so-cond-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 33px;
+  padding: 0 12px;
+  border-radius: 99px;
+  border: 1px solid #d5e1eb;
+  background: #ffffff;
+  color: #46586b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.so-cond-pill i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.so-cond-pill span {
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #eef4f8;
+  color: #54667a;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+.so-cond-pill.cond-new i { background: #10b981; }
+.so-cond-pill.cond-used i { background: #0284c7; }
+.so-cond-pill.cond-quarantine i { background: #f59e0b; }
+.so-cond-pill.cond-damaged i { background: #ef4444; }
+.so-cond-pill.active {
+  background: #0b7d72;
+  border-color: #0b7d72;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(11, 125, 114, 0.22);
+}
+.so-cond-pill.active span {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+.so-cond-pill.cond-used.active { background: #0369a1; border-color: #0369a1; }
+.so-cond-pill.cond-quarantine.active { background: #c2780a; border-color: #c2780a; }
+.so-cond-pill.cond-damaged.active { background: #c03934; border-color: #c03934; }
+
+.so-nonzero-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #445566;
+  cursor: pointer;
+}
+.so-nonzero-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+}
+
+.so-groups-stack {
+  display: grid;
+  gap: 14px;
+}
+.so-group-card {
+  border-radius: 13px;
+  border: 1px solid #dbe5ee;
+  background: #ffffff;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(15, 35, 55, 0.03);
+}
+.so-group-card.tone-new { border-left: 4px solid #10b981; }
+.so-group-card.tone-used_good { border-left: 4px solid #0284c7; }
+.so-group-card.tone-quarantine { border-left: 4px solid #f59e0b; }
+.so-group-card.tone-damaged { border-left: 4px solid #ef4444; }
+
+.so-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e4ecf2;
+}
+.so-group-card.tone-new .so-group-head { background: linear-gradient(90deg, #ecfdf5 0%, #f8fdfb 100%); }
+.so-group-card.tone-used_good .so-group-head { background: linear-gradient(90deg, #f0f9ff 0%, #f8fbfe 100%); }
+.so-group-card.tone-quarantine .so-group-head { background: linear-gradient(90deg, #fffbeb 0%, #fffdf7 100%); }
+.so-group-card.tone-damaged .so-group-head { background: linear-gradient(90deg, #fef2f2 0%, #fffafa 100%); }
+
+.so-group-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.so-group-title small {
+  color: #607285;
+  font-size: 11.5px;
+}
+.so-group-metrics {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cond-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.cond-badge.sm {
+  padding: 3px 8px;
+  font-size: 10.5px;
+}
+.cond-badge.cond-new {
+  background: #dcfce7;
+  color: #0f766e;
+  border: 1px solid #a7f3d0;
+}
+.cond-badge.cond-used {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+.cond-badge.cond-quarantine {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+.cond-badge.cond-damaged {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.so-row-plus td {
+  background: #f0fdf8 !important;
+}
+.so-row-minus td {
+  background: #fff5f5 !important;
+}
+.so-qty-input {
+  font-weight: 800;
+  text-align: center;
+}

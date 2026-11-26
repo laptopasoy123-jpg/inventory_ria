@@ -43,10 +43,18 @@ procurementRoutes.delete('/:id', async (c) => {
   return c.json({ message: 'Pengadaan barang berhasil dihapus' })
 })
 
-procurementRoutes.patch('/:id/status', zValidator('json', z.object({ status: z.enum(['ordered', 'cancelled']) })), async (c) => {
-  await c.get('service').updateProcurementStatus(c.req.param('id'), c.req.valid('json').status)
-  return c.json({ message: 'Status pengadaan berhasil diubah' })
-})
+procurementRoutes.patch(
+  '/:id/status',
+  zValidator('json', z.object({
+    status: z.enum(['ordered', 'cancelled']),
+    cancelNote: z.string().trim().max(1000).optional(),
+  })),
+  async (c) => {
+    const body = c.req.valid('json')
+    await c.get('service').updateProcurementStatus(c.req.param('id'), body.status, body.cancelNote)
+    return c.json({ message: body.status === 'cancelled' ? 'Pengadaan berhasil dibatalkan' : 'Status pengadaan berhasil diubah' })
+  },
+)
 
 procurementRoutes.post('/payments', zValidator('json', procurementPaymentSchema), async (c) => {
   const data = await c.get('service').createProcurementPayment(c.req.valid('json'))
