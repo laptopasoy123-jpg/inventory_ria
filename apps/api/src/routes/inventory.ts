@@ -45,6 +45,11 @@ inventoryRoutes.put('/opening-stock/:id', zValidator('json', openingStockSchema)
   return c.json({ data, message: 'Stok awal berhasil diperbarui' })
 })
 
+inventoryRoutes.delete('/opening-stock/:id', async (c) => {
+  await c.get('service').deleteOpeningStock(c.req.param('id'))
+  return c.json({ message: 'Stok awal berhasil dihapus & stok disesuaikan' })
+})
+
 inventoryRoutes.post('/condition-transfer', zValidator('json', conditionTransferSchema), async (c) => {
   const data = await c.get('service').transferCondition(c.req.valid('json'))
   return c.json({ data, message: 'Kondisi stok berhasil diperbarui' }, 201)

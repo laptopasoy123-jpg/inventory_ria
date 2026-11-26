@@ -924,11 +924,129 @@ export class LocalInventoryService implements InventoryService {
     const state = await this.load()
     const proc = state.procurements.find((p) => p.id === id)
     if (!proc) throw new Error('Pengadaan tidak ditemukan')
-    if (status === 'cancelled') {
-      const totalRec = proc.items.reduce((s, i) => s + Number(i.received_quantity || 0), 0)
-      if (totalRec > 0) throw new Error('Pengadaan yang sudah memiliki barang masuk tidak dapat dibatalkan')
+    if (status === 'cancelled' && proc.status === 'completed') {
+      throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
     }
     proc.status = status as LocalState['procurements'][number]['status']
+    await this.save(state)
+  }
+
+  async deleteOpeningStock(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.opening_stocks.findIndex((o) => o.id === id)
+    if (idx === -1) throw new Error('Data stok awal tidak ditemukan')
+    const rec = state.opening_stocks[idx]!
+    for (const line of rec.items) {
+      this.applyMovement(state, line.variant_id, line.condition, -line.quantity, 'opening_stock', 'opening_stock', id, `Hapus stok awal ${rec.transaction_no}`, new Date().toISOString())
+    }
+    state.opening_stocks.splice(idx, 1)
+    await this.save(state)
+  }
+
+  async deleteProcurement(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.procurements.findIndex((p) => p.id === id)
+    if (idx === -1) throw new Error('Pengadaan tidak ditemukan')
+    const proc = state.procurements[idx]!
+    const procItemIds = new Set(proc.items.map((i) => i.id))
+    for (const pur of state.purchases) {
+      if (pur.procurement_id === id) pur.procurement_id = null
+      for (const it of pur.items) {
+        if (it.procurement_item_id && procItemIds.has(it.procurement_item_id)) it.procurement_item_id = null
+      }
+    }
+    state.procurement_payments = state.procurement_payments.filter((pay) => pay.procurement_id !== id)
+    state.procurements.splice(idx, 1)
+    await this.save(state)
+  }
+
+  async deleteProcurementPayment(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.procurement_payments.findIndex((p) => p.id === id)
+    if (idx === -1) throw new Error('Data pembayaran tidak ditemukan')
+    const pay = state.procurement_payments[idx]!
+    state.procurement_payments.splice(idx, 1)
+    const proc = state.procurements.find((p) => p.id === pay.procurement_id)
+    if (proc) {
+      const paid = state.procurement_payments.filter((x) => x.procurement_id === proc.id && x.payment_type !== 'reimbursement').reduce((s, x) => s + x.amount, 0)
+      const reimb = state.procurement_payments.filter((x) => x.procurement_id === proc.id && x.payment_type === 'reimbursement').reduce((s, x) => s + x.amount, 0)
+      proc.paid_amount = paid
+      proc.payment_status = paid >= proc.total_amount && proc.total_amount > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+      if (proc.funding_source === 'advanced') {
+        proc.reimbursement_status = reimb >= proc.total_amount ? 'paid' : reimb > 0 ? 'partially_paid' : 'not_submitted'
+      }
+    }
+    await this.save(state)
+  }
+
+  async deletePurchaseReceipt(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.purchases.findIndex((p) => p.id === id)
+    if (idx === -1) throw new Error('Transaksi barang masuk tidak ditemukan')
+    const pur = state.purchases[idx]!
+    for (const line of pur.items) {
+      this.applyMovement(state, line.variant_id, line.condition, -line.quantity, 'receipt', 'purchase', id, `Hapus barang masuk ${pur.transaction_no}`, new Date().toISOString())
+      if (line.procurement_item_id) {
+        for (const proc of state.procurements) {
+          const pi = proc.items.find((x) => x.id === line.procurement_item_id)
+          if (pi) pi.received_quantity = Math.max(0, pi.received_quantity - line.quantity)
+        }
+      }
+    }
+    state.purchases.splice(idx, 1)
+    if (pur.procurement_id) {
+      const proc = state.procurements.find((p) => p.id === pur.procurement_id)
+      if (proc && proc.status !== 'cancelled') {
+        const totalOrd = proc.items.reduce((s, i) => s + i.ordered_quantity, 0)
+        const totalRec = proc.items.reduce((s, i) => s + i.received_quantity, 0)
+        proc.status = totalRec >= totalOrd && totalOrd > 0 ? 'completed' : totalRec > 0 ? 'partial' : 'ordered'
+      }
+    }
+    await this.save(state)
+  }
+
+  async deleteIssuance(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.issuances.findIndex((i) => i.id === id)
+    if (idx === -1) throw new Error('Transaksi barang keluar tidak ditemukan')
+    const iss = state.issuances[idx]!
+    if (iss.items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)) {
+      throw new Error('Barang keluar yang sudah memiliki catatan pengembalian tidak dapat dihapus. Hapus data pengembalian terkait terlebih dahulu.')
+    }
+    for (const line of iss.items) {
+      this.applyMovement(state, line.variant_id, line.condition, line.quantity, 'issuance', 'issuance', id, `Hapus barang keluar ${iss.transaction_no}`, new Date().toISOString())
+    }
+    state.issuances.splice(idx, 1)
+    await this.save(state)
+  }
+
+  async deleteReturn(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.returns.findIndex((r) => r.id === id)
+    if (idx === -1) throw new Error('Transaksi pengembalian tidak ditemukan')
+    const ret = state.returns[idx]!
+    for (const old of ret.items) {
+      let foundLine: LocalState['issuances'][number]['items'][number] | null = null
+      for (const iss of state.issuances) {
+        const m = iss.items.find((x) => x.id === old.issuance_item_id)
+        if (m) { foundLine = m; break }
+      }
+      if (!foundLine) continue
+      if (old.result === 'lost') {
+        foundLine.resolved_lost_quantity = Math.max(0, foundLine.resolved_lost_quantity - old.quantity)
+      } else {
+        foundLine.returned_quantity = Math.max(0, foundLine.returned_quantity - old.quantity)
+        const targetCond: StockCondition | null =
+          old.result === 'used_good' ? 'used_good'
+            : old.result === 'maintenance' ? 'quarantine'
+              : old.result === 'damaged' && old.reusable === true ? 'used_good'
+                : null
+        if (targetCond) {
+          this.applyMovement(state, foundLine.variant_id, targetCond, -old.quantity, 'return', 'return', id, `Hapus pengembalian ${ret.transaction_no}`, new Date().toISOString())
+        }
+      }
+    }
+    state.returns.splice(idx, 1)
     await this.save(state)
   }
 
@@ -1625,13 +1743,26 @@ export class LocalInventoryService implements InventoryService {
     const state = await this.load()
     const st = state.stocktakes.find((s) => s.id === id)
     if (!st) throw new Error('Stok opname tidak ditemukan')
-    if (st.status === 'completed') throw new Error('Stok opname yang sudah difinalisasi tidak dapat diedit')
+    const wasCompleted = st.status === 'completed'
+
+    if (wasCompleted) {
+      for (const old of st.items) {
+        const adj = Number(old.adjustment_quantity || 0)
+        if (adj !== 0) {
+          this.applyMovement(state, old.variant_id, old.condition, -adj, 'stocktake_adjustment', 'stocktake', st.id, `Revisi ${st.stocktake_no} (koreksi)`, new Date().toISOString())
+        }
+      }
+    }
 
     st.officer_name = input.officerName
     if (input.referenceAt) st.reference_at = this.toOccurredAt(input.referenceAt)
     st.items = input.items.map((line) => {
       const bal = state.stock_balances.find((b) => b.variant_id === line.variantId && b.condition === line.condition)
       const sysQty = Number(bal?.quantity ?? 0)
+      const adj = line.physicalQuantity - sysQty
+      if (wasCompleted && adj !== 0) {
+        this.applyMovement(state, line.variantId, line.condition, adj, 'stocktake_adjustment', 'stocktake', st.id, line.reason || `Revisi ${st.stocktake_no}`, new Date().toISOString())
+      }
       return {
         id: crypto.randomUUID(),
         variant_id: line.variantId,
@@ -1639,15 +1770,32 @@ export class LocalInventoryService implements InventoryService {
         system_quantity: sysQty,
         physical_quantity: line.physicalQuantity,
         reason: line.reason ?? null,
-        adjustment_quantity: line.physicalQuantity - sysQty,
+        adjustment_quantity: adj,
       }
     })
 
     await this.save(state)
-    if (input.finalizeNow) {
+    if (!wasCompleted && input.finalizeNow) {
       return this.finalizeStocktake(id)
     }
     return id
+  }
+
+  async deleteStocktake(id: string): Promise<void> {
+    const state = await this.load()
+    const idx = state.stocktakes.findIndex((s) => s.id === id)
+    if (idx === -1) throw new Error('Stok opname tidak ditemukan')
+    const st = state.stocktakes[idx]!
+    if (st.status === 'completed') {
+      for (const old of st.items) {
+        const adj = Number(old.adjustment_quantity || 0)
+        if (adj !== 0) {
+          this.applyMovement(state, old.variant_id, old.condition, -adj, 'stocktake_adjustment', 'stocktake', st.id, `Hapus ${st.stocktake_no} (pembalikan stok)`, new Date().toISOString())
+        }
+      }
+    }
+    state.stocktakes.splice(idx, 1)
+    await this.save(state)
   }
 
   async finalizeStocktake(stocktakeId: string): Promise<string> {
@@ -1657,13 +1805,9 @@ export class LocalInventoryService implements InventoryService {
     if (st.status !== 'pending_review') throw new Error('Stok opname harus berstatus Menunggu Pemeriksaan')
 
     for (const line of st.items) {
-      const movementSince = state.stock_movements
-        .filter((m) => m.variant_id === line.variant_id && m.condition === line.condition && new Date(m.occurred_at) > new Date(st.reference_at))
-        .reduce((s, m) => s + m.quantity_delta, 0)
-      const expectedNow = line.physical_quantity + movementSince
       const bal = state.stock_balances.find((b) => b.variant_id === line.variant_id && b.condition === line.condition)
       const currentQty = Number(bal?.quantity ?? 0)
-      const adjustment = expectedNow - currentQty
+      const adjustment = line.physical_quantity - currentQty
       if (adjustment !== 0) {
         this.applyMovement(
           state,
@@ -1677,6 +1821,7 @@ export class LocalInventoryService implements InventoryService {
           new Date().toISOString(),
         )
       }
+      line.system_quantity = currentQty
       line.adjustment_quantity = adjustment
     }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ArrowUpDown, CheckCircle2, Edit3, PackageCheck, Plus, Search, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, CalendarRange, CheckCircle2, Edit3, PackageCheck, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -31,6 +31,11 @@ const rows = ref<ReturnRow[]>([])
 const loading = ref(true)
 const filterResult = ref('all')
 const search = ref('')
+const employeeFilter = ref('all')
+const departmentFilter = ref('all')
+const inspectorFilter = ref('all')
+const dateFrom = ref('')
+const dateTo = ref('')
 const page = ref(1)
 
 const showModal = ref(false)
@@ -46,8 +51,8 @@ interface ReturnDraftLine {
   unit: string
   txNo: string
   remaining: number
-  returnedQty: number
-  lostQty: number
+  returnedQty: number | string
+  lostQty: number | string
   notes: string
 }
 
@@ -61,13 +66,58 @@ const form = reactive({
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
+const employeeFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Karyawan' },
+  ...master.employees.map((e) => ({ value: e.id, label: e.name, sublabel: e.nik })),
+])
+
+const departmentFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Departemen' },
+  ...master.departments.map((d) => ({ value: d.name, label: d.name, sublabel: d.code })),
+])
+
+const inspectorFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.inspector_name) names.add(r.inspector_name)
+  for (const o of master.officers) if (o.name) names.add(o.name)
+  return [
+    { value: 'all', label: 'Semua Petugas' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const hasActiveFilters = computed(() =>
+  Boolean(search.value.trim() || employeeFilter.value !== 'all' || departmentFilter.value !== 'all' || inspectorFilter.value !== 'all' || dateFrom.value || dateTo.value),
+)
+
+function resetFilters() {
+  search.value = ''
+  employeeFilter.value = 'all'
+  departmentFilter.value = 'all'
+  inspectorFilter.value = 'all'
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const filtered = computed(() => {
   const list = rows.value.filter((r) => {
     if (filterResult.value === 'returned' && !r.return_items.some((it) => it.result !== 'lost')) return false
     if (filterResult.value === 'lost' && !r.return_items.some((it) => it.result === 'lost')) return false
+    if (employeeFilter.value !== 'all' && r.employee_id !== employeeFilter.value) return false
+    if (departmentFilter.value !== 'all' && (r.employees?.departments?.name || '') !== departmentFilter.value) return false
+    if (inspectorFilter.value !== 'all' && r.inspector_name !== inspectorFilter.value) return false
+    const d = (r.returned_at || '').slice(0, 10)
+    if (dateFrom.value && d < dateFrom.value) return false
+    if (dateTo.value && d > dateTo.value) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
-    return r.transaction_no.toLowerCase().includes(q) || (r.employees?.name || '').toLowerCase().includes(q) || r.inspector_name.toLowerCase().includes(q)
+    return (
+      r.transaction_no.toLowerCase().includes(q) ||
+      (r.employees?.name || '').toLowerCase().includes(q) ||
+      (r.employees?.nik || '').toLowerCase().includes(q) ||
+      r.inspector_name.toLowerCase().includes(q) ||
+      r.return_items.some((it) => (it.issuance_items?.item_variants?.items?.name || '').toLowerCase().includes(q))
+    )
   })
   return [...list].sort((a, b) => {
     const cmp = a.transaction_no.localeCompare(b.transaction_no, undefined, { numeric: true })
@@ -76,7 +126,7 @@ const filtered = computed(() => {
 })
 
 const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
-watch([filterResult, search], () => { page.value = 1 })
+watch([filterResult, search, employeeFilter, departmentFilter, inspectorFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 async function load() {
   loading.value = true
@@ -105,8 +155,8 @@ async function loadEmployeeOpenItems(employeeId: string) {
         unit: it.item_variants?.items?.unit || 'unit',
         txNo: `${it.issuances?.transaction_no || '-'} · ${formatDate(it.issuances?.issued_at)}`,
         remaining: rem,
-        returnedQty: rem,
-        lostQty: 0,
+        returnedQty: '',
+        lostQty: '',
         notes: '',
       }
     })
@@ -129,18 +179,28 @@ const officerOptions = computed(() =>
   activeOfficers.value.map((off) => ({ value: off.name, label: off.name, sublabel: off.role_label })),
 )
 
+function parseQty(val: number | string): number {
+  if (val === '' || val === null || val === undefined) return 0
+  const n = Number(val)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 function onLostQtyChange(line: ReturnDraftLine) {
+  if (line.lostQty === '' || line.lostQty === null) return
   const lost = Math.max(0, Math.min(line.remaining, Number(line.lostQty || 0)))
   line.lostQty = lost
-  if (line.returnedQty + lost > line.remaining) {
+  const ret = parseQty(line.returnedQty)
+  if (ret + lost > line.remaining) {
     line.returnedQty = Math.max(0, line.remaining - lost)
   }
 }
 
 function onReturnedQtyChange(line: ReturnDraftLine) {
+  if (line.returnedQty === '' || line.returnedQty === null) return
   const ret = Math.max(0, Math.min(line.remaining, Number(line.returnedQty || 0)))
   line.returnedQty = ret
-  if (ret + line.lostQty > line.remaining) {
+  const lost = parseQty(line.lostQty)
+  if (ret + lost > line.remaining) {
     line.lostQty = Math.max(0, line.remaining - ret)
   }
 }
@@ -183,8 +243,8 @@ async function openEditModal(row: ReturnRow) {
       const qty = Number(it.quantity)
       if (prev) {
         prev.remaining += qty
-        if (it.result === 'lost') prev.lostQty += qty
-        else prev.returnedQty += qty
+        if (it.result === 'lost') prev.lostQty = parseQty(prev.lostQty) + qty
+        else prev.returnedQty = parseQty(prev.returnedQty) + qty
         if (it.reason && !prev.notes) prev.notes = it.reason
       } else {
         grouped.set(it.issuance_item_id, {
@@ -194,8 +254,8 @@ async function openEditModal(row: ReturnRow) {
           unit: it.issuance_items?.item_variants?.items?.unit || 'unit',
           txNo: row.transaction_no,
           remaining: qty + extra,
-          returnedQty: it.result === 'lost' ? 0 : qty,
-          lostQty: it.result === 'lost' ? qty : 0,
+          returnedQty: it.result === 'lost' ? '' : qty,
+          lostQty: it.result === 'lost' ? qty : '',
           notes: it.reason || '',
         })
       }
@@ -226,9 +286,9 @@ async function handleUpload(e: Event) {
 }
 
 async function submit() {
-  const chosen = form.lines.filter((l) => l.selected && (Number(l.returnedQty || 0) > 0 || Number(l.lostQty || 0) > 0))
+  const chosen = form.lines.filter((l) => l.selected && (parseQty(l.returnedQty) > 0 || parseQty(l.lostQty) > 0))
   if (!chosen.length) {
-    toast.error('Pilih minimal 1 item dengan Qty Dikembalikan atau Qty Hilang > 0')
+    toast.error('Isi minimal 1 item dengan Qty Dikembalikan atau Qty Hilang > 0')
     return
   }
 
@@ -241,8 +301,8 @@ async function submit() {
   }> = []
 
   for (const l of chosen) {
-    const ret = Number(l.returnedQty || 0)
-    const lost = Number(l.lostQty || 0)
+    const ret = parseQty(l.returnedQty)
+    const lost = parseQty(l.lostQty)
     if (ret + lost > l.remaining) {
       toast.error(`Total kembali + hilang melebihi sisa tanggungan ${l.remaining} (${l.label})`)
       return
@@ -296,6 +356,17 @@ async function submit() {
   }
 }
 
+async function deleteReturn(row: ReturnRow) {
+  if (!window.confirm(`Hapus transaksi pengembalian "${row.transaction_no}"? Tanggungan karyawan dan stok gudang akan dikembalikan ke kondisi sebelum pengembalian ini.`)) return
+  try {
+    await api(`/api/transactions/returns/${row.id}`, { method: 'DELETE' })
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Pengembalian ${row.transaction_no} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus pengembalian')
+  }
+}
+
 function resultBadge(r: string) {
   if (r === 'lost') return { label: 'Hilang', cls: 'out', effect: 'Tercatat di Log Kehilangan / SO' }
   return { label: 'Dikembalikan', cls: 'safe', effect: 'Masuk stok tersedia (Bekas Layak)' }
@@ -318,9 +389,9 @@ onActivated(() => {
   <div>
     <section class="page-intro">
       <div>
-        <p class="eyebrow">Pengembalian & Tanggungan</p>
+        <p class="eyebrow">Pengembalian &amp; Tanggungan</p>
         <h2>Pengembalian APD</h2>
-        <p>Tarik tanggungan APD aktif karyawan. Barang yang dikembalikan masuk stok tersedia; barang hilang ditandai & masuk catatan Stok Opname.</p>
+        <p>Tarik tanggungan APD aktif karyawan. Barang yang dikembalikan masuk stok tersedia; barang hilang ditandai &amp; masuk catatan Stok Opname.</p>
       </div>
       <div class="intro-actions">
         <button class="primary-button" @click="openModal"><Plus :size="17" /> Catat Pengembalian</button>
@@ -329,12 +400,24 @@ onActivated(() => {
 
     <section class="panel data-panel">
       <div class="record-tabs">
-        <button :class="{ active: filterResult === 'all' }" @click="filterResult = 'all'">Semua</button>
+        <button :class="{ active: filterResult === 'all' }" @click="filterResult = 'all'">Semua ({{ rows.length }})</button>
         <button :class="{ active: filterResult === 'returned' }" @click="filterResult = 'returned'">Dikembalikan ke Stok</button>
         <button :class="{ active: filterResult === 'lost' }" @click="filterResult = 'lost'">Ada Hilang</button>
       </div>
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Pengembalian, karyawan, atau petugas..." /></label>
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Pengembalian, karyawan, barang, atau petugas..." /></label>
+        <div class="date-range-inline">
+          <CalendarRange :size="15" />
+          <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" />
+          <span class="date-sep">s/d</span>
+          <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" />
+        </div>
+        <ModernSelect v-model="employeeFilter" :options="employeeFilterOptions" compact searchable search-placeholder="Cari karyawan..." />
+        <ModernSelect v-model="departmentFilter" :options="departmentFilterOptions" compact searchable search-placeholder="Cari departemen..." />
+        <ModernSelect v-model="inspectorFilter" :options="inspectorFilterOptions" compact searchable search-placeholder="Cari petugas..." />
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
 
       <div class="table-wrap">
@@ -373,10 +456,15 @@ onActivated(() => {
                 </div>
               </td>
               <td>{{ row.inspector_name }}</td>
-              <td><button class="icon-button" title="Edit pengembalian" @click="openEditModal(row)"><Edit3 :size="15" /></button></td>
+              <td>
+                <div class="row-actions">
+                  <button class="icon-button" title="Edit pengembalian" @click="openEditModal(row)"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus pengembalian" @click="deleteReturn(row)"><Trash2 :size="15" /></button>
+                </div>
+              </td>
             </tr>
             <tr v-if="!loading && !filtered.length">
-              <td colspan="6"><div class="empty-state"><PackageCheck :size="32" /><strong>Belum ada pengembalian APD</strong><span>Pilih karyawan untuk menarik sisa tanggungan APD aktifnya.</span></div></td>
+              <td colspan="6"><div class="empty-state"><PackageCheck :size="32" /><strong>Belum ada pengembalian APD yang cocok</strong><span>Ubah filter atau pilih karyawan untuk mencatat pengembalian.</span></div></td>
             </tr>
             <tr v-if="loading"><td colspan="6"><div class="loading-row">Memuat riwayat pengembalian...</div></td></tr>
           </tbody>
@@ -389,7 +477,7 @@ onActivated(() => {
       :open="showModal"
       :title="editingId ? 'Edit Pengembalian APD' : 'Catat Pengembalian APD'"
       eyebrow="Pengembalian ke Inventaris"
-      subtitle="Pilih karyawan untuk memuat otomatis daftar APD yang masih menjadi tanggungannya."
+      subtitle="Pilih karyawan untuk memuat daftar APD yang masih menjadi tanggungannya, lalu ketik jumlah yang dikembalikan/hilang."
       size="lg"
       @close="showModal = false"
     >
@@ -397,10 +485,10 @@ onActivated(() => {
         <div class="form-grid-3">
           <label class="field"><span>Tanggal Kembali *</span><input v-model="form.returnedAt" type="date" required /></label>
           <label class="field"><span>Karyawan *</span>
-            <ModernSelect v-model="form.employeeId" :options="employeeOptions" :disabled="Boolean(editingId)" required />
+            <ModernSelect v-model="form.employeeId" :options="employeeOptions" searchable :disabled="Boolean(editingId)" required />
           </label>
           <label class="field"><span>Petugas Penerima / Pemeriksa *</span>
-            <ModernSelect v-if="activeOfficers.length" v-model="form.inspectorName" :options="officerOptions" required />
+            <ModernSelect v-if="activeOfficers.length" v-model="form.inspectorName" :options="officerOptions" searchable required />
             <input v-else v-model="form.inspectorName" required />
           </label>
         </div>
@@ -409,7 +497,7 @@ onActivated(() => {
           <div class="lines-header">
             <div>
               <strong>Tanggungan APD Aktif Karyawan</strong>
-              <small>Centang barang yang diproses, lalu isi jumlah dikembalikan atau hilang.</small>
+              <small>Centang barang yang diproses, lalu ketik sendiri jumlah dikembalikan atau hilang (maksimal sesuai tanggungan).</small>
             </div>
           </div>
           <div v-if="loadingOpen" class="loading-row">Mencari tanggungan APD...</div>
@@ -424,48 +512,50 @@ onActivated(() => {
                 <div class="return-card-meta">
                   <span class="tag-pill">{{ line.txNo }}</span>
                   <span class="tag-pill">Tanggungan: <b>{{ formatNumber(line.remaining) }} {{ line.unit }}</b></span>
-                  <span v-if="line.selected && line.lostQty > 0" class="status-pill out">
-                    <AlertTriangle :size="12" /> Hilang: {{ line.lostQty }}
+                  <span v-if="line.selected && parseQty(line.lostQty) > 0" class="status-pill out">
+                    <AlertTriangle :size="12" /> Hilang: {{ parseQty(line.lostQty) }}
                   </span>
                 </div>
               </div>
               <div v-if="line.selected" class="form-grid-3">
                 <label class="field">
-                  <span>Qty Dikembalikan</span>
+                  <span>Qty Dikembalikan (Maks {{ formatNumber(line.remaining) }})</span>
                   <input
-                    v-model.number="line.returnedQty"
+                    v-model="line.returnedQty"
                     type="number"
                     min="0"
                     :max="line.remaining"
                     step="any"
+                    placeholder="Ketik jumlah..."
                     @input="onReturnedQtyChange(line)"
                   />
                 </label>
                 <label class="field">
                   <span>Qty Hilang</span>
                   <input
-                    v-model.number="line.lostQty"
+                    v-model="line.lostQty"
                     type="number"
                     min="0"
                     :max="line.remaining"
                     step="any"
+                    placeholder="0"
                     @input="onLostQtyChange(line)"
                   />
                 </label>
                 <label class="field">
-                  <span>Catatan Tambahan {{ line.lostQty > 0 ? '*' : '(Opsional)' }}</span>
+                  <span>Catatan Tambahan {{ parseQty(line.lostQty) > 0 ? '*' : '(Opsional)' }}</span>
                   <input
                     v-model="line.notes"
-                    :required="line.lostQty > 0"
-                    :placeholder="line.lostQty > 0 ? 'Wajib isi alasan/kronologi kehilangan' : 'Catatan kondisi / keterangan tambahan'"
+                    :required="parseQty(line.lostQty) > 0"
+                    :placeholder="parseQty(line.lostQty) > 0 ? 'Wajib isi alasan/kronologi kehilangan' : 'Catatan kondisi / keterangan tambahan'"
                   />
                 </label>
               </div>
-              <div v-if="line.selected && line.returnedQty > 0" class="positive-hint">
-                <CheckCircle2 :size="14" /> <b>+{{ formatNumber(line.returnedQty) }} unit</b> otomatis masuk kembali ke stok tersedia.
+              <div v-if="line.selected && parseQty(line.returnedQty) > 0" class="positive-hint">
+                <CheckCircle2 :size="14" /> <b>+{{ formatNumber(parseQty(line.returnedQty)) }} unit</b> otomatis masuk kembali ke stok tersedia.
               </div>
-              <div v-if="line.selected && line.lostQty > 0" class="error-hint" style="margin-top:4px;">
-                <AlertTriangle :size="14" /> <b>{{ formatNumber(line.lostQty) }} unit hilang</b> ditandai dan tercatat di Log Kehilangan / Stok Opname (tidak masuk stok).
+              <div v-if="line.selected && parseQty(line.lostQty) > 0" class="error-hint" style="margin-top:4px;">
+                <AlertTriangle :size="14" /> <b>{{ formatNumber(parseQty(line.lostQty)) }} unit hilang</b> ditandai dan tercatat di Log Kehilangan / Stok Opname (tidak masuk stok).
               </div>
             </div>
           </div>

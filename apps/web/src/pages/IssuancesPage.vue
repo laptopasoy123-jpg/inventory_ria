@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertTriangle, ArrowUpDown, Edit3, PackageMinus, Plus, Search, Trash2, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, CalendarRange, Edit3, PackageMinus, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -28,6 +28,13 @@ const toast = useToast()
 const rows = ref<IssuanceRow[]>([])
 const loading = ref(true)
 const search = ref('')
+const employeeFilter = ref('all')
+const departmentFilter = ref('all')
+const officerFilter = ref('all')
+const itemFilter = ref('all')
+const liabilityFilter = ref('all')
+const dateFrom = ref('')
+const dateTo = ref('')
 const page = ref(1)
 const showModal = ref(false)
 const editingId = ref<string | null>(null)
@@ -47,16 +54,84 @@ const editingRow = computed(() => rows.value.find((r) => r.id === editingId.valu
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
+const employeeFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Karyawan' },
+  ...master.employees.map((e) => ({ value: e.id, label: e.name, sublabel: e.nik })),
+])
+
+const departmentFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Departemen' },
+  ...master.departments.map((d) => ({ value: d.name, label: d.name, sublabel: d.code })),
+])
+
+const officerFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.officer_name) names.add(r.officer_name)
+  for (const o of master.officers) if (o.name) names.add(o.name)
+  return [
+    { value: 'all', label: 'Semua Petugas' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const itemFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Barang APD' },
+  ...master.variants.map((v) => ({ value: v.variant_id, label: variantLabel(v), sublabel: v.code })),
+])
+
+const liabilityFilterOptions = [
+  { value: 'all', label: 'Semua Status Tanggungan' },
+  { value: 'open', label: 'Masih Dibawa Karyawan' },
+  { value: 'closed', label: 'Sudah Kembali / Lunas' },
+  { value: 'consumable', label: 'Habis Pakai' },
+]
+
+const hasActiveFilters = computed(() =>
+  Boolean(
+    search.value.trim() ||
+    employeeFilter.value !== 'all' ||
+    departmentFilter.value !== 'all' ||
+    officerFilter.value !== 'all' ||
+    itemFilter.value !== 'all' ||
+    liabilityFilter.value !== 'all' ||
+    dateFrom.value ||
+    dateTo.value,
+  ),
+)
+
+function resetFilters() {
+  search.value = ''
+  employeeFilter.value = 'all'
+  departmentFilter.value = 'all'
+  officerFilter.value = 'all'
+  itemFilter.value = 'all'
+  liabilityFilter.value = 'all'
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const list = !q
-    ? rows.value
-    : rows.value.filter((r) =>
-        r.transaction_no.toLowerCase().includes(q) ||
-        r.officer_name.toLowerCase().includes(q) ||
-        (r.employees?.name || '').toLowerCase().includes(q) ||
-        (r.employees?.nik || '').toLowerCase().includes(q),
-      )
+  const list = rows.value.filter((r) => {
+    if (employeeFilter.value !== 'all' && r.employee_id !== employeeFilter.value) return false
+    if (departmentFilter.value !== 'all' && (r.employees?.departments?.name || '') !== departmentFilter.value) return false
+    if (officerFilter.value !== 'all' && r.officer_name !== officerFilter.value) return false
+    if (itemFilter.value !== 'all' && !r.issuance_items.some((it) => it.variant_id === itemFilter.value)) return false
+    if (liabilityFilter.value === 'open' && !r.issuance_items.some((it) => it.item_variants?.items?.return_required && (it.quantity - it.returned_quantity - it.resolved_lost_quantity) > 0)) return false
+    if (liabilityFilter.value === 'closed' && !r.issuance_items.some((it) => it.item_variants?.items?.return_required && (it.quantity - it.returned_quantity - it.resolved_lost_quantity) <= 0)) return false
+    if (liabilityFilter.value === 'consumable' && !r.issuance_items.some((it) => it.item_variants?.items?.return_required === false)) return false
+    const d = (r.issued_at || '').slice(0, 10)
+    if (dateFrom.value && d < dateFrom.value) return false
+    if (dateTo.value && d > dateTo.value) return false
+    if (!q) return true
+    return (
+      r.transaction_no.toLowerCase().includes(q) ||
+      r.officer_name.toLowerCase().includes(q) ||
+      (r.employees?.name || '').toLowerCase().includes(q) ||
+      (r.employees?.nik || '').toLowerCase().includes(q) ||
+      r.issuance_items.some((it) => (it.item_variants?.items?.name || '').toLowerCase().includes(q))
+    )
+  })
   return [...list].sort((a, b) => {
     const cmp = a.transaction_no.localeCompare(b.transaction_no, undefined, { numeric: true })
     return sortDir.value === 'asc' ? cmp : -cmp
@@ -64,7 +139,7 @@ const filtered = computed(() => {
 })
 
 const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
-watch(search, () => { page.value = 1 })
+watch([search, employeeFilter, departmentFilter, officerFilter, itemFilter, liabilityFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function variantInfo(variantId: string) {
   return master.variants.find((x) => x.variant_id === variantId) || null
@@ -219,6 +294,17 @@ async function submit() {
   }
 }
 
+async function deleteIssuance(row: IssuanceRow) {
+  if (!window.confirm(`Hapus transaksi barang keluar "${row.transaction_no}"? Stok barang akan otomatis dikembalikan ke gudang.`)) return
+  try {
+    await api(`/api/transactions/issuances/${row.id}`, { method: 'DELETE' })
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Barang keluar ${row.transaction_no} berhasil dihapus & stok dikembalikan`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus barang keluar')
+  }
+}
+
 let lastCacheVer = -1
 onMounted(() => {
   if (route.query.action === 'new') void openModal()
@@ -248,8 +334,22 @@ onActivated(() => {
     </section>
 
     <section class="panel data-panel">
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Transaksi, nama karyawan, NIK, atau petugas..." /></label>
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Transaksi, karyawan, NIK, barang, atau petugas..." /></label>
+        <div class="date-range-inline">
+          <CalendarRange :size="15" />
+          <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" />
+          <span class="date-sep">s/d</span>
+          <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" />
+        </div>
+        <ModernSelect v-model="employeeFilter" :options="employeeFilterOptions" compact searchable search-placeholder="Cari karyawan..." />
+        <ModernSelect v-model="departmentFilter" :options="departmentFilterOptions" compact searchable search-placeholder="Cari departemen..." />
+        <ModernSelect v-model="itemFilter" :options="itemFilterOptions" compact searchable search-placeholder="Cari barang APD..." />
+        <ModernSelect v-model="officerFilter" :options="officerFilterOptions" compact searchable search-placeholder="Cari petugas..." />
+        <ModernSelect v-model="liabilityFilter" :options="liabilityFilterOptions" compact searchable search-placeholder="Cari status tanggungan..." />
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
       <div class="table-wrap">
         <table>
@@ -299,14 +399,24 @@ onActivated(() => {
               </td>
               <td>{{ row.officer_name }}</td>
               <td>
-                <button
-                  class="icon-button"
-                  :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
-                  :title="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0) ? 'Sudah ada pengembalian' : 'Edit barang keluar'"
-                  @click="openEditModal(row)"
-                >
-                  <Edit3 :size="15" />
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="icon-button"
+                    :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
+                    :title="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0) ? 'Sudah ada pengembalian' : 'Edit barang keluar'"
+                    @click="openEditModal(row)"
+                  >
+                    <Edit3 :size="15" />
+                  </button>
+                  <button
+                    class="icon-button danger"
+                    :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
+                    :title="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0) ? 'Hapus data pengembalian terkait terlebih dahulu' : 'Hapus barang keluar'"
+                    @click="deleteIssuance(row)"
+                  >
+                    <Trash2 :size="15" />
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="!loading && !filtered.length">

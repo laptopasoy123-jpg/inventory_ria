@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
-import { AlertTriangle, CalendarRange, CheckSquare, Download, FileDown, Printer, RefreshCw } from '@lucide/vue'
-import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, getApiCacheVersion, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
+import { AlertTriangle, CalendarRange, CheckSquare, Download, FileDown, Printer, RefreshCw, RotateCcw, Search } from '@lucide/vue'
+import ModernSelect from '@/components/ModernSelect.vue'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
 import type { PdfSectionTable } from '@/lib/pdf-report'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -19,6 +20,11 @@ const loadError = ref('')
 const dateFrom = ref('')
 const dateTo = ref('')
 const activePreset = ref<'all' | 'month' | '30d' | 'custom'>('all')
+const search = ref('')
+const supplierFilter = ref('all')
+const employeeFilter = ref('all')
+const departmentFilter = ref('all')
+const itemFilter = ref('all')
 
 const selectedSections = reactive<Record<ReportSectionKey, boolean>>({
   stock: true,
@@ -30,7 +36,7 @@ const selectedSections = reactive<Record<ReportSectionKey, boolean>>({
 })
 
 const sectionList: Array<{ key: ReportSectionKey; label: string }> = [
-  { key: 'stock', label: 'Saldo Stok Saat Ini' },
+  { key: 'stock', label: 'Stok Tersedia Saat Ini' },
   { key: 'movements', label: 'Mutasi / Arus APD' },
   { key: 'procurements', label: 'Pengadaan & Progress' },
   { key: 'opname', label: 'Stok Opname (+/-)' },
@@ -49,10 +55,51 @@ function toggleSelectAllSections() {
   }
 }
 
-const movements = ref<Array<{ id: number; occurred_at: string; movement_type: string; condition: string; quantity_delta: number; balance_after: number; notes: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }>>([])
-const procurements = ref<Array<{ procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
-const stocktakes = ref<Array<{ stocktake_no: string; reference_at: string; officer_name: string; status: string; stocktake_items: Array<{ condition: string; system_quantity: number; physical_quantity: number; reason: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }> }>>([])
-const liabilities = ref<Array<{ quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string; issuances?: { transaction_no: string; issued_at: string; employees?: { nik: string; name: string; departments?: { name: string } | null } | null } | null; item_variants?: { size: string; items?: { name: string; unit: string } | null } | null }>>([])
+const movements = ref<Array<{ id: number; variant_id?: string; occurred_at: string; movement_type: string; condition: string; quantity_delta: number; balance_after: number; notes: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }>>([])
+const procurements = ref<Array<{ procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; department_name?: string | null; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
+const stocktakes = ref<Array<{ stocktake_no: string; reference_at: string; officer_name: string; status: string; stocktake_items: Array<{ variant_id?: string; condition: string; system_quantity: number; physical_quantity: number; reason: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }> }>>([])
+const liabilities = ref<Array<{
+  id?: string; variant_id?: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string;
+  issuances?: { transaction_no: string; issued_at: string; employee_id?: string; employees?: { id?: string; nik: string; name: string; departments?: { name: string } | null } | null } | null;
+  item_variants?: { id?: string; size: string; items?: { code?: string; name: string; unit: string; return_required?: boolean } | null } | null
+}>>([])
+
+const supplierFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const p of procurements.value) if (p.supplier_name) names.add(p.supplier_name)
+  for (const s of master.suppliers) if (s.name) names.add(s.name)
+  return [
+    { value: 'all', label: 'Semua Supplier / Toko' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const employeeFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Karyawan' },
+  ...master.employees.map((e) => ({ value: e.name, label: e.name, sublabel: e.nik })),
+])
+
+const departmentFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Departemen' },
+  ...master.departments.map((d) => ({ value: d.name, label: d.name, sublabel: d.code })),
+])
+
+const itemFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Barang APD' },
+  ...master.variants.map((v) => ({ value: v.name, label: variantLabel(v), sublabel: v.code })),
+])
+
+const hasExtraFilters = computed(() =>
+  Boolean(search.value.trim() || supplierFilter.value !== 'all' || employeeFilter.value !== 'all' || departmentFilter.value !== 'all' || itemFilter.value !== 'all'),
+)
+
+function resetExtraFilters() {
+  search.value = ''
+  supplierFilter.value = 'all'
+  employeeFilter.value = 'all'
+  departmentFilter.value = 'all'
+  itemFilter.value = 'all'
+}
 
 function inDateRange(dateStr?: string | null): boolean {
   if (!dateStr) return true
@@ -62,10 +109,78 @@ function inDateRange(dateStr?: string | null): boolean {
   return true
 }
 
-const filteredMovements = computed(() => movements.value.filter((m) => inDateRange(m.occurred_at)))
-const filteredProcurements = computed(() => procurements.value.filter((p) => inDateRange(p.procurement_date)))
-const filteredStocktakes = computed(() => stocktakes.value.filter((s) => inDateRange(s.reference_at)))
-const filteredLiabilities = computed(() => liabilities.value.filter((l) => inDateRange(l.issuances?.issued_at)))
+const filteredVariants = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return master.variants.filter((v) => {
+    if (itemFilter.value !== 'all' && v.name !== itemFilter.value) return false
+    if (!q) return true
+    return v.name.toLowerCase().includes(q) || v.code.toLowerCase().includes(q) || (v.size || '').toLowerCase().includes(q)
+  })
+})
+
+const filteredMovements = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return movements.value.filter((m) => {
+    if (!inDateRange(m.occurred_at)) return false
+    const itemName = m.item_variants?.items?.name || ''
+    if (itemFilter.value !== 'all' && itemName !== itemFilter.value) return false
+    if (!q) return true
+    return itemName.toLowerCase().includes(q) || (m.notes || '').toLowerCase().includes(q) || movementName(m.movement_type).toLowerCase().includes(q)
+  })
+})
+
+const filteredProcurements = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return procurements.value.filter((p) => {
+    if (!inDateRange(p.procurement_date)) return false
+    if (supplierFilter.value !== 'all' && p.supplier_name !== supplierFilter.value) return false
+    if (departmentFilter.value !== 'all' && (p.department_name || '') !== departmentFilter.value) return false
+    if (!q) return true
+    return p.procurement_no.toLowerCase().includes(q) || (p.po_number || '').toLowerCase().includes(q) || p.supplier_name.toLowerCase().includes(q)
+  })
+})
+
+const filteredStocktakes = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return stocktakes.value
+    .filter((s) => inDateRange(s.reference_at))
+    .map((s) => ({
+      ...s,
+      stocktake_items: (s.stocktake_items ?? []).filter((it) => {
+        const name = it.item_variants?.items?.name || ''
+        if (itemFilter.value !== 'all' && name !== itemFilter.value) return false
+        if (!q) return true
+        return s.stocktake_no.toLowerCase().includes(q) || s.officer_name.toLowerCase().includes(q) || name.toLowerCase().includes(q) || (it.reason || '').toLowerCase().includes(q)
+      }),
+    }))
+    .filter((s) => s.stocktake_items.length > 0)
+})
+
+const filteredLiabilities = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return liabilities.value.filter((l) => {
+    const remaining = Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity)
+    if (remaining <= 0) return false
+    // Active employee liabilities remain active regardless of date range unless user explicitly picked custom dates
+    if ((dateFrom.value || dateTo.value) && !inDateRange(l.issuances?.issued_at)) return false
+    const empName = l.issuances?.employees?.name || ''
+    const deptName = l.issuances?.employees?.departments?.name || ''
+    const itemName = l.item_variants?.items?.name || ''
+    if (employeeFilter.value !== 'all' && empName !== employeeFilter.value) return false
+    if (departmentFilter.value !== 'all' && deptName !== departmentFilter.value) return false
+    if (itemFilter.value !== 'all' && itemName !== itemFilter.value) return false
+    if (!q) return true
+    return (
+      (l.issuances?.transaction_no || '').toLowerCase().includes(q) ||
+      empName.toLowerCase().includes(q) ||
+      (l.issuances?.employees?.nik || '').toLowerCase().includes(q) ||
+      deptName.toLowerCase().includes(q) ||
+      itemName.toLowerCase().includes(q) ||
+      (l.purpose || '').toLowerCase().includes(q)
+    )
+  })
+})
+
 const filteredPayments = computed(() =>
   filteredProcurements.value.filter((p) => p.status !== 'cancelled' && Number(p.total_amount || 0) > 0),
 )
@@ -116,17 +231,70 @@ async function loadAll(force = false) {
   loading.value = true
   loadError.value = ''
   try {
-    const [m, pr, st, lb] = await Promise.all([
+    const results = await Promise.allSettled([
       api<{ data: typeof movements.value }>('/api/inventory/movements?limit=300'),
       api<{ data: typeof procurements.value }>('/api/procurements'),
       api<{ data: typeof stocktakes.value }>('/api/transactions/stocktakes'),
       api<{ data: typeof liabilities.value }>('/api/transactions/liabilities'),
+      api<{
+        data: Array<{
+          transaction_no: string; issued_at: string; employee_id: string;
+          employees?: { nik: string; name: string; departments?: { name: string } | null } | null;
+          issuance_items: Array<{
+            id: string; variant_id: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string;
+            item_variants?: { size: string; items?: { code?: string; name: string; unit: string; return_required?: boolean } | null } | null
+          }>
+        }>
+      }>('/api/transactions/issuances'),
       master.refresh(force),
     ])
-    movements.value = m.data
-    procurements.value = pr.data
-    stocktakes.value = st.data
-    liabilities.value = lb.data
+
+    const errors: string[] = []
+    if (results[0].status === 'fulfilled') movements.value = results[0].value.data
+    else errors.push('Mutasi')
+
+    if (results[1].status === 'fulfilled') procurements.value = results[1].value.data
+    else errors.push('Pengadaan')
+
+    if (results[2].status === 'fulfilled') stocktakes.value = results[2].value.data
+    else errors.push('Stok Opname')
+
+    // Primary liabilities endpoint + fallback from issuances so employee liabilities NEVER show empty when active issuances exist
+    let loadedLiabilities: typeof liabilities.value = []
+    if (results[3].status === 'fulfilled' && Array.isArray(results[3].value.data)) {
+      loadedLiabilities = results[3].value.data
+    }
+    if (!loadedLiabilities.length && results[4].status === 'fulfilled' && Array.isArray(results[4].value.data)) {
+      const derived: typeof liabilities.value = []
+      for (const iss of results[4].value.data) {
+        for (const it of iss.issuance_items ?? []) {
+          const rem = Number(it.quantity) - Number(it.returned_quantity) - Number(it.resolved_lost_quantity)
+          if (rem > 0) {
+            derived.push({
+              id: it.id,
+              variant_id: it.variant_id,
+              quantity: it.quantity,
+              returned_quantity: it.returned_quantity,
+              resolved_lost_quantity: it.resolved_lost_quantity,
+              purpose: it.purpose,
+              issuances: {
+                transaction_no: iss.transaction_no,
+                issued_at: iss.issued_at,
+                employee_id: iss.employee_id,
+                employees: iss.employees,
+              },
+              item_variants: it.item_variants,
+            })
+          }
+        }
+      }
+      loadedLiabilities = derived
+    }
+    liabilities.value = loadedLiabilities
+
+    if (errors.length) {
+      loadError.value = `Sebagian data gagal dimuat (${errors.join(', ')}). Klik muat ulang untuk mencoba lagi.`
+    }
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : 'Gagal memuat data laporan'
   } finally {
@@ -147,10 +315,10 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
 
   if (selectedSections.stock) {
     sections.push({
-      title: '1. Saldo Stok Inventaris APD Saat Ini',
-      subtitle: `Total ${master.variants.length} item APD aktif terdaftar di gudang`,
-      headers: ['Kode', 'Nama Barang', 'Satuan', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Total Tersedia'],
-      rows: master.variants.map((v) => [
+      title: '1. Stok Tersedia Saat Ini (Sampai Hari Ini)',
+      subtitle: `Total ${filteredVariants.value.length} item APD aktif terdaftar di gudang`,
+      headers: ['Kode', 'Nama Barang', 'Satuan', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Stok Tersedia Saat Ini'],
+      rows: filteredVariants.value.map((v) => [
         v.code,
         variantLabel(v),
         v.unit,
@@ -167,7 +335,7 @@ const checkedSections = computed<PdfSectionTable[]>(() => {
     sections.push({
       title: '2. Mutasi Stok & Arus APD',
       subtitle: `Menampilkan ${filteredMovements.value.length} aktivitas mutasi`,
-      headers: ['Tanggal', 'Nama Barang', 'Jenis Mutasi', 'Kondisi', 'Perubahan', 'Stok Akhir', 'Keterangan'],
+      headers: ['Tanggal', 'Nama Barang', 'Jenis Mutasi', 'Kondisi', 'Perubahan', 'Stok Setelah Mutasi', 'Keterangan'],
       rows: filteredMovements.value.map((m) => {
         const u = m.item_variants?.items?.unit || 'unit'
         return [
@@ -312,10 +480,10 @@ function exportActiveCsv() {
     return
   }
   if (activeTab.value === 'stock') {
-    downloadCsv(`laporan-stok-${d}.csv`, ['Kode', 'Nama', 'Ukuran', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Tersedia'],
-      master.variants.map(v => [v.code, v.name, v.size, v.stock_new, v.stock_used_good, v.stock_quarantine, v.stock_damaged, v.total_available]))
+    downloadCsv(`laporan-stok-saat-ini-${d}.csv`, ['Kode', 'Nama', 'Ukuran', 'Baru', 'Bekas Layak', 'Karantina', 'Rusak', 'Stok Tersedia Saat Ini'],
+      filteredVariants.value.map(v => [v.code, v.name, v.size, v.stock_new, v.stock_used_good, v.stock_quarantine, v.stock_damaged, v.total_available]))
   } else if (activeTab.value === 'movements') {
-    downloadCsv(`laporan-mutasi-${d}.csv`, ['Tanggal', 'Barang', 'Ukuran', 'Jenis', 'Kondisi', 'Perubahan', 'Stok Akhir', 'Keterangan'],
+    downloadCsv(`laporan-mutasi-${d}.csv`, ['Tanggal', 'Barang', 'Ukuran', 'Jenis', 'Kondisi', 'Perubahan', 'Stok Setelah Mutasi', 'Keterangan'],
       filteredMovements.value.map(m => [m.occurred_at.slice(0, 10), m.item_variants?.items?.name, m.item_variants?.size, movementName(m.movement_type), conditionLabel(m.condition), m.quantity_delta, m.balance_after, m.notes]))
   } else if (activeTab.value === 'procurements') {
     downloadCsv(`laporan-pengadaan-${d}.csv`, ['No Pengadaan', 'Tanggal', 'PO', 'Supplier', 'Dipesan', 'Diterima', 'Progress %', 'Total Tagihan', 'Terbayar', 'Status Bayar'],
@@ -335,14 +503,8 @@ function exportActiveCsv() {
   }
 }
 
-let lastCacheVer = -1
-onMounted(() => { lastCacheVer = getApiCacheVersion(); void loadAll() })
-onActivated(() => {
-  if (getApiCacheVersion() !== lastCacheVer) {
-    lastCacheVer = getApiCacheVersion()
-    void loadAll()
-  }
-})
+onMounted(() => { void loadAll(true) })
+onActivated(() => { void loadAll(true) })
 </script>
 
 <template>
@@ -376,7 +538,7 @@ onActivated(() => {
       <div>
         <p class="eyebrow">Analitik, Cetak &amp; Ekspor</p>
         <h2>Laporan Inventaris</h2>
-        <p>Tampilkan semua sesi sekaligus atau pilih sesi tertentu untuk ditinjau, dicetak, dan diunduh ke PDF/CSV.</p>
+        <p>Tampilkan semua sesi sekaligus atau pilih sesi tertentu untuk ditinjau, difilter, dicetak, dan diunduh ke PDF/CSV.</p>
       </div>
       <div class="intro-actions report-actions-bar">
         <button class="primary-button report-pdf-btn" @click="downloadPdfReport"><FileDown :size="16" /> Download PDF</button>
@@ -425,6 +587,17 @@ onActivated(() => {
           </div>
         </div>
       </div>
+
+      <div class="table-toolbar filter-toolbar-rich" style="margin-top:12px;padding:12px 0 0;border-bottom:0;border-top:1px solid var(--border);">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari barang, karyawan, supplier, nomor dokumen..." /></label>
+        <ModernSelect v-model="itemFilter" :options="itemFilterOptions" compact searchable search-placeholder="Cari barang APD..." />
+        <ModernSelect v-model="supplierFilter" :options="supplierFilterOptions" compact searchable search-placeholder="Cari supplier / toko..." />
+        <ModernSelect v-model="employeeFilter" :options="employeeFilterOptions" compact searchable search-placeholder="Cari karyawan..." />
+        <ModernSelect v-model="departmentFilter" :options="departmentFilterOptions" compact searchable search-placeholder="Cari departemen..." />
+        <button v-if="hasExtraFilters" type="button" class="secondary-button xs" @click="resetExtraFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
+      </div>
     </section>
 
     <!-- Screen Tab View -->
@@ -436,12 +609,12 @@ onActivated(() => {
         <button :class="{ active: activeTab === 'opname' }" @click="activeTab = 'opname'">Stok Opname (+/-)</button>
         <button :class="{ active: activeTab === 'liabilities' }" @click="activeTab = 'liabilities'">Tanggungan ({{ filteredLiabilities.length }})</button>
         <button :class="{ active: activeTab === 'payments' }" @click="activeTab = 'payments'">History Pembayaran ({{ filteredPayments.length }})</button>
-        <button :class="{ active: activeTab === 'stock' }" @click="activeTab = 'stock'">Saldo Stok ({{ master.variants.length }})</button>
+        <button :class="{ active: activeTab === 'stock' }" @click="activeTab = 'stock'">Stok Saat Ini ({{ filteredVariants.length }})</button>
       </div>
 
       <div v-if="loading" class="loading-row">Memuat data laporan...</div>
 
-      <div v-else-if="activeTab === 'all'" style="display:grid;gap:22px;">
+      <div v-else-if="activeTab === 'all'" style="display:grid;gap:22px;padding:16px;">
         <div v-if="!checkedSections.length" class="empty-state compact">
           <strong>Belum ada sesi yang diceklis.</strong>
           <span>Klik "Pilih Semua" atau ceklis minimal satu sesi di atas.</span>
@@ -466,7 +639,7 @@ onActivated(() => {
                   </td>
                 </tr>
                 <tr v-if="!sec.rows.length">
-                  <td :colspan="sec.headers.length"><div class="empty-state compact">Tidak ada data pada periode ini.</div></td>
+                  <td :colspan="sec.headers.length"><div class="empty-state compact">Tidak ada data pada filter/periode ini.</div></td>
                 </tr>
               </tbody>
             </table>
@@ -476,9 +649,9 @@ onActivated(() => {
 
       <div v-else-if="activeTab === 'stock'" class="table-wrap">
         <table>
-          <thead><tr><th>Kode &amp; Barang</th><th>Satuan</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Total Tersedia</th></tr></thead>
+          <thead><tr><th>Kode &amp; Barang</th><th>Satuan</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Stok Tersedia Saat Ini</th></tr></thead>
           <tbody>
-            <tr v-for="v in master.variants" :key="v.variant_id">
+            <tr v-for="v in filteredVariants" :key="v.variant_id">
               <td><strong>{{ variantLabel(v) }}</strong><small class="table-sub">{{ v.code }}</small></td>
               <td><span class="tag-pill">{{ v.unit }}</span></td>
               <td>{{ formatNumber(v.stock_new) }} {{ v.unit }}</td>
@@ -487,13 +660,14 @@ onActivated(() => {
               <td>{{ formatNumber(v.stock_damaged) }} {{ v.unit }}</td>
               <td><strong>{{ formatNumber(v.total_available) }} {{ v.unit }}</strong></td>
             </tr>
+            <tr v-if="!filteredVariants.length"><td colspan="7"><div class="empty-state compact">Tidak ada barang yang cocok.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else-if="activeTab === 'movements'" class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Akhir</th><th>Catatan</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Setelah Mutasi</th><th>Catatan</th></tr></thead>
           <tbody>
             <tr v-for="m in filteredMovements" :key="m.id">
               <td>{{ formatDate(m.occurred_at) }}</td>
@@ -504,7 +678,7 @@ onActivated(() => {
               <td><strong>{{ formatNumber(m.balance_after) }} {{ m.item_variants?.items?.unit || '' }}</strong></td>
               <td>{{ m.notes || '-' }}</td>
             </tr>
-            <tr v-if="!filteredMovements.length"><td colspan="7"><div class="empty-state compact">Tidak ada mutasi pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredMovements.length"><td colspan="7"><div class="empty-state compact">Tidak ada mutasi pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -520,7 +694,7 @@ onActivated(() => {
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td><span class="status-pill" :class="p.status === 'completed' ? 'safe' : p.status === 'cancelled' ? 'out' : 'amber'">{{ p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' }}</span></td>
             </tr>
-            <tr v-if="!filteredProcurements.length"><td colspan="5"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredProcurements.length"><td colspan="5"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -544,7 +718,7 @@ onActivated(() => {
                 <td>{{ it.reason || '-' }}</td>
               </tr>
             </template>
-            <tr v-if="!filteredStocktakes.length"><td colspan="7"><div class="empty-state compact">Tidak ada laporan stok opname pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredStocktakes.length"><td colspan="7"><div class="empty-state compact">Tidak ada laporan stok opname pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -553,15 +727,15 @@ onActivated(() => {
         <table>
           <thead><tr><th>No. Pengeluaran</th><th>Karyawan</th><th>Departemen</th><th>Barang</th><th>Sisa Dibawa</th><th>Keperluan</th></tr></thead>
           <tbody>
-            <tr v-for="(l, idx) in filteredLiabilities" :key="idx">
-              <td><strong>{{ l.issuances?.transaction_no }}</strong><small class="table-sub">{{ formatDate(l.issuances?.issued_at) }}</small></td>
-              <td><strong>{{ l.issuances?.employees?.name }}</strong><small class="table-sub">{{ l.issuances?.employees?.nik }}</small></td>
+            <tr v-for="(l, idx) in filteredLiabilities" :key="l.id || idx">
+              <td><strong>{{ l.issuances?.transaction_no || '-' }}</strong><small class="table-sub">{{ formatDate(l.issuances?.issued_at) }}</small></td>
+              <td><strong>{{ l.issuances?.employees?.name || '-' }}</strong><small class="table-sub">{{ l.issuances?.employees?.nik || '-' }}</small></td>
               <td>{{ l.issuances?.employees?.departments?.name || '-' }}</td>
               <td>{{ variantLabel({ name: l.item_variants?.items?.name, size: l.item_variants?.size }) }}</td>
               <td><strong class="text-amber">{{ formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity)) }} {{ l.item_variants?.items?.unit }}</strong></td>
               <td>{{ l.purpose }}</td>
             </tr>
-            <tr v-if="!filteredLiabilities.length"><td colspan="6"><div class="empty-state compact">Tidak ada tanggungan aktif pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredLiabilities.length"><td colspan="6"><div class="empty-state compact">Tidak ada tanggungan aktif yang cocok dengan filter/rentang tanggal ini.</div></td></tr>
           </tbody>
         </table>
       </div>
@@ -578,7 +752,7 @@ onActivated(() => {
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td>{{ p.progress_percent }}%</td>
             </tr>
-            <tr v-if="!filteredPayments.length"><td colspan="6"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredPayments.length"><td colspan="6"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>

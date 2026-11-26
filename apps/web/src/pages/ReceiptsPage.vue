@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowUpDown, Edit3, Plus, Search, Truck } from '@lucide/vue'
+import { ArrowUpDown, CalendarRange, Edit3, Plus, RotateCcw, Search, Trash2, Truck } from '@lucide/vue'
+import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal, { type EditablePurchase } from '@/components/ReceiptModal.vue'
 import { api, conditionLabel, formatDate, formatNumber, getApiCacheVersion } from '@/lib/api'
+import { useToast } from '@/composables/useToast'
+import { useMasterStore } from '@/stores/master'
 
 interface PurchaseRow extends EditablePurchase {
   transaction_no: string
@@ -15,27 +18,86 @@ interface PurchaseRow extends EditablePurchase {
 }
 
 const route = useRoute()
+const master = useMasterStore()
+const toast = useToast()
+
 const rows = ref<PurchaseRow[]>([])
 const loading = ref(true)
 const search = ref('')
 const filterSource = ref('all')
+const supplierFilter = ref('all')
+const receiverFilter = ref('all')
+const conditionFilter = ref('all')
+const dateFrom = ref('')
+const dateTo = ref('')
 const page = ref(1)
 const showModal = ref(false)
 const editingRow = ref<EditablePurchase | null>(null)
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
+const supplierFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.suppliers?.name) names.add(r.suppliers.name)
+  for (const s of master.suppliers) if (s.name) names.add(s.name)
+  return [
+    { value: 'all', label: 'Semua Supplier / Toko' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const receiverFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) {
+    for (const it of r.purchase_items) if (it.receiver_name) names.add(it.receiver_name)
+  }
+  for (const o of master.officers) if (o.name) names.add(o.name)
+  return [
+    { value: 'all', label: 'Semua Petugas Penerima' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const conditionFilterOptions = [
+  { value: 'all', label: 'Semua Kondisi' },
+  { value: 'new', label: 'Baru' },
+  { value: 'used_good', label: 'Bekas Layak' },
+  { value: 'quarantine', label: 'Karantina' },
+  { value: 'damaged', label: 'Rusak' },
+]
+
+const hasActiveFilters = computed(() =>
+  Boolean(search.value.trim() || supplierFilter.value !== 'all' || receiverFilter.value !== 'all' || conditionFilter.value !== 'all' || dateFrom.value || dateTo.value),
+)
+
+function resetFilters() {
+  search.value = ''
+  supplierFilter.value = 'all'
+  receiverFilter.value = 'all'
+  conditionFilter.value = 'all'
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const filtered = computed(() => {
   const list = rows.value.filter((r) => {
     if (filterSource.value === 'procurement' && !r.procurements) return false
     if (filterSource.value === 'direct' && r.procurements) return false
+    if (supplierFilter.value !== 'all' && (r.suppliers?.name || '') !== supplierFilter.value) return false
+    if (receiverFilter.value !== 'all' && !r.purchase_items.some((it) => it.receiver_name === receiverFilter.value)) return false
+    if (conditionFilter.value !== 'all' && !r.purchase_items.some((it) => it.condition === conditionFilter.value)) return false
+    const d = (r.received_date || '').slice(0, 10)
+    if (dateFrom.value && d < dateFrom.value) return false
+    if (dateTo.value && d > dateTo.value) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
     return (
       r.transaction_no.toLowerCase().includes(q) ||
       (r.procurements?.procurement_no || '').toLowerCase().includes(q) ||
       (r.po_number || '').toLowerCase().includes(q) ||
-      (r.suppliers?.name || '').toLowerCase().includes(q)
+      (r.suppliers?.name || '').toLowerCase().includes(q) ||
+      r.reason.toLowerCase().includes(q) ||
+      r.purchase_items.some((it) => (it.item_variants?.items?.name || '').toLowerCase().includes(q))
     )
   })
   return [...list].sort((a, b) => {
@@ -46,7 +108,7 @@ const filtered = computed(() => {
 })
 
 const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
-watch([search, filterSource], () => { page.value = 1 })
+watch([search, filterSource, supplierFilter, receiverFilter, conditionFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function summarizePurchaseItems(items: PurchaseRow['purchase_items']) {
   const map = new Map<string, { name: string; unit: string; qty: number; conditions: Set<string> }>()
@@ -77,6 +139,17 @@ function openEdit(row: PurchaseRow) {
   showModal.value = true
 }
 
+async function deletePurchase(row: PurchaseRow) {
+  if (!window.confirm(`Hapus transaksi barang masuk "${row.transaction_no}"? Stok inventaris yang bertambah dari transaksi ini akan dikurangi kembali.`)) return
+  try {
+    await api(`/api/transactions/purchases/${row.id}`, { method: 'DELETE' })
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Barang masuk ${row.transaction_no} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus barang masuk')
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -91,7 +164,7 @@ let lastCacheVer = -1
 onMounted(() => {
   if (route.query.action === 'new') openAdd()
   lastCacheVer = getApiCacheVersion()
-  void load()
+  void Promise.all([load(), master.refresh()])
 })
 onActivated(() => {
   if (route.query.action === 'new') openAdd()
@@ -117,12 +190,24 @@ onActivated(() => {
 
     <section class="panel data-panel">
       <div class="record-tabs">
-        <button :class="{ active: filterSource === 'all' }" @click="filterSource = 'all'">Semua Penerimaan</button>
+        <button :class="{ active: filterSource === 'all' }" @click="filterSource = 'all'">Semua Penerimaan ({{ rows.length }})</button>
         <button :class="{ active: filterSource === 'procurement' }" @click="filterSource = 'procurement'">Dari Pengadaan (PO)</button>
         <button :class="{ active: filterSource === 'direct' }" @click="filterSource = 'direct'">Pembelian Langsung</button>
       </div>
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Penerimaan, No. Pengadaan, No. PO, atau supplier..." /></label>
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Penerimaan, No. Pengadaan, PO, barang, atau supplier..." /></label>
+        <div class="date-range-inline">
+          <CalendarRange :size="15" />
+          <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" />
+          <span class="date-sep">s/d</span>
+          <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" />
+        </div>
+        <ModernSelect v-model="supplierFilter" :options="supplierFilterOptions" compact searchable search-placeholder="Cari supplier / toko..." />
+        <ModernSelect v-model="receiverFilter" :options="receiverFilterOptions" compact searchable search-placeholder="Cari petugas penerima..." />
+        <ModernSelect v-model="conditionFilter" :options="conditionFilterOptions" compact searchable search-placeholder="Cari kondisi..." />
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
       <div class="table-wrap">
         <table>
@@ -166,11 +251,14 @@ onActivated(() => {
               </td>
               <td>{{ row.purchase_items[0]?.receiver_name || '-' }}</td>
               <td>
-                <button class="icon-button" title="Edit barang masuk" @click="openEdit(row)"><Edit3 :size="15" /></button>
+                <div class="row-actions">
+                  <button class="icon-button" title="Edit barang masuk" @click="openEdit(row)"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus barang masuk" @click="deletePurchase(row)"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!loading && !filtered.length">
-              <td colspan="6"><div class="empty-state"><Truck :size="32" /><strong>Belum ada barang masuk tercatat</strong><span>Klik "Catat Barang Masuk" dan pilih Pengadaan yang datang.</span></div></td>
+              <td colspan="6"><div class="empty-state"><Truck :size="32" /><strong>Belum ada barang masuk yang cocok</strong><span>Ubah filter atau klik "Catat Barang Masuk".</span></div></td>
             </tr>
             <tr v-if="loading"><td colspan="6"><div class="loading-row">Memuat riwayat barang masuk...</div></td></tr>
           </tbody>

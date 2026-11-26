@@ -2,7 +2,7 @@
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  AlertTriangle, ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes,
+  AlertTriangle, ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, Boxes, Calendar,
   CheckCircle2, ClipboardCheck, ClipboardList, PackageCheck, PackageMinus, PackagePlus, RefreshCw, ShoppingBag, Wallet,
 } from '@lucide/vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -27,7 +27,14 @@ const router = useRouter()
 const master = useMasterStore()
 const now = new Date()
 const period = ref<'all' | 'month' | 'year'>('all')
+const selectedYear = ref<number>(now.getFullYear())
 const selectedUnit = ref('all')
+let yearDebounceTimer: number | undefined
+
+const validYear = computed(() => {
+  const y = Number(selectedYear.value)
+  return Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : now.getFullYear()
+})
 const loading = ref(true)
 const error = ref('')
 const data = ref<Dashboard>({
@@ -55,10 +62,10 @@ const historyRows = ref<Array<Record<string, HistoryCell>>>([])
 
 const periodLabelText = computed(() => {
   if (period.value === 'month') {
-    return new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(now)
+    return new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date(validYear.value, now.getMonth(), 1))
   }
-  if (period.value === 'year') return `Tahun ${now.getFullYear()}`
-  return 'Semua waktu'
+  if (period.value === 'year') return `Tahun ${validYear.value}`
+  return `Semua waktu (Grafik ${validYear.value})`
 })
 
 const unitOptions = computed(() => [
@@ -135,8 +142,8 @@ function matchesActivePeriod(dateStr?: string | null) {
   if (period.value === 'all' || !dateStr) return true
   const d = new Date(dateStr)
   if (Number.isNaN(d.getTime())) return true
-  if (period.value === 'year') return d.getFullYear() === now.getFullYear()
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+  if (period.value === 'year') return d.getFullYear() === validYear.value
+  return d.getFullYear() === validYear.value && d.getMonth() === now.getMonth()
 }
 
 async function openDashboardHistory(
@@ -415,15 +422,15 @@ async function load(force = false) {
   error.value = ''
   try {
     const m = now.getMonth() + 1
-    const y = now.getFullYear()
+    const y = validYear.value
     const [response, procRes, movRes] = await Promise.all([
       api<{ data: Dashboard }>(`/api/dashboard?period=${period.value}&month=${m}&year=${y}`),
-      api<{ data: Array<{ status: string; total_amount: number }> }>('/api/procurements').catch(() => ({ data: [] })),
+      api<{ data: Array<{ status: string; total_amount: number; procurement_date?: string }> }>('/api/procurements').catch(() => ({ data: [] })),
       api<{ data: typeof recentMovements.value }>('/api/inventory/movements?limit=6').catch(() => ({ data: [] })),
     ])
     data.value = response.data
     totalRecordedNominal.value = procRes.data
-      .filter((p) => p.status !== 'cancelled')
+      .filter((p) => p.status !== 'cancelled' && matchesActivePeriod(p.procurement_date))
       .reduce((s, p) => s + Number(p.total_amount || 0), 0)
     recentMovements.value = movRes.data
     lastCacheVer = getApiCacheVersion()
@@ -461,6 +468,15 @@ onActivated(() => {
   if (getApiCacheVersion() !== lastCacheVer) void load()
 })
 watch(period, () => void load())
+watch(selectedYear, (val) => {
+  const num = Number(val)
+  if (!Number.isInteger(num) || num < 2000 || num > 2100) return
+  if (period.value === 'all' && num !== now.getFullYear()) {
+    period.value = 'year'
+  }
+  window.clearTimeout(yearDebounceTimer)
+  yearDebounceTimer = window.setTimeout(() => { void load() }, 250)
+})
 </script>
 
 <template>
@@ -472,10 +488,23 @@ watch(period, () => void load())
         <p>Semua angka bisa langsung diklik untuk melihat rincian &amp; riwayat datanya.</p>
       </div>
       <div class="filter-group">
+        <label class="year-input-pill" title="Ketik tahun untuk filter dashboard & grafik">
+          <Calendar :size="15" />
+          <span>Tahun</span>
+          <input
+            v-model.number="selectedYear"
+            type="number"
+            min="2000"
+            max="2100"
+            step="1"
+            :placeholder="String(now.getFullYear())"
+            aria-label="Filter Tahun"
+          />
+        </label>
         <div class="period-pills" role="group" aria-label="Filter periode dashboard">
           <button type="button" :class="{ active: period === 'all' }" @click="period = 'all'">Semua</button>
           <button type="button" :class="{ active: period === 'month' }" @click="period = 'month'">Bulan Ini</button>
-          <button type="button" :class="{ active: period === 'year' }" @click="period = 'year'">Tahun Ini</button>
+          <button type="button" :class="{ active: period === 'year' }" @click="period = 'year'">Tahun {{ validYear }}</button>
         </div>
         <button class="secondary-button square" aria-label="Muat ulang" @click="load(true)"><RefreshCw :size="17" :class="{ spinning: loading }" /></button>
       </div>
@@ -563,10 +592,10 @@ watch(period, () => void load())
       <article class="panel chart-panel">
         <div class="panel-header">
           <div>
-            <h3>Grafik Masuk vs Keluar ({{ now.getFullYear() }})</h3>
+            <h3>Grafik Masuk vs Keluar ({{ validYear }})</h3>
             <p>Perbandingan barang masuk dan keluar tiap bulan ({{ selectedUnit === 'all' ? 'semua satuan' : `satuan ${selectedUnit}` }})</p>
           </div>
-          <ModernSelect v-model="selectedUnit" :options="unitOptions" compact :searchable="false" />
+          <ModernSelect v-model="selectedUnit" :options="unitOptions" compact searchable search-placeholder="Cari satuan..." />
         </div>
         <div class="chart-legend"><span><i class="incoming" />Masuk (Hijau Tua)</span><span><i class="outgoing" />Keluar (Hijau Muda)</span></div>
         <div v-if="chartRows.length" class="bar-chart">

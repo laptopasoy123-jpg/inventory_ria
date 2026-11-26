@@ -78,6 +78,7 @@ export interface InventoryService {
   listOpeningStocks(): Promise<Record<string, unknown>[]>
   createOpeningStock(input: OpeningStockInput, idempotencyKey: string): Promise<string>
   updateOpeningStock(id: string, input: OpeningStockInput): Promise<string>
+  deleteOpeningStock(id: string): Promise<void>
   transferCondition(input: ConditionTransferInput): Promise<string>
 
   listProcurements(params: {
@@ -90,27 +91,33 @@ export interface InventoryService {
   getProcurement(id: string): Promise<Record<string, unknown>>
   createProcurement(input: ProcurementInput, idempotencyKey: string): Promise<string>
   updateProcurement(id: string, input: ProcurementInput): Promise<string>
+  deleteProcurement(id: string): Promise<void>
   updateProcurementStatus(id: string, status: string): Promise<void>
   createProcurementPayment(input: ProcurementPaymentInput): Promise<string>
   updateProcurementPayment(id: string, input: ProcurementPaymentInput): Promise<string>
+  deleteProcurementPayment(id: string): Promise<void>
   listPayments(): Promise<Record<string, unknown>[]>
 
   listPurchases(params: { fundingSource?: string; search?: string }): Promise<Record<string, unknown>[]>
   createPurchaseReceipt(input: PurchaseInput, idempotencyKey: string): Promise<string>
   updatePurchaseReceipt(id: string, input: PurchaseInput): Promise<string>
+  deletePurchaseReceipt(id: string): Promise<void>
 
   listIssuances(params: { search?: string; employeeId?: string }): Promise<Record<string, unknown>[]>
   listOpenIssuanceItemsByEmployee(employeeId: string): Promise<Record<string, unknown>[]>
   createIssuance(input: IssuanceInput, idempotencyKey: string): Promise<string>
   updateIssuance(id: string, input: IssuanceInput): Promise<string>
+  deleteIssuance(id: string): Promise<void>
 
   listReturns(params: { result?: string; search?: string }): Promise<Record<string, unknown>[]>
   createReturn(input: ReturnInput, idempotencyKey: string): Promise<string>
   updateReturn(id: string, input: ReturnInput): Promise<string>
+  deleteReturn(id: string): Promise<void>
 
   listStocktakes(params: { status?: string }): Promise<Record<string, unknown>[]>
   createStocktake(input: StocktakeCreateInput): Promise<string>
   updateStocktake(id: string, input: StocktakeCreateInput): Promise<string>
+  deleteStocktake(id: string): Promise<void>
   finalizeStocktake(stocktakeId: string): Promise<string>
 
   createReimbursement(input: ReimbursementInput): Promise<string>

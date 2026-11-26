@@ -2,8 +2,8 @@
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ArrowRightLeft, ClipboardList, Download,
-  History, PackageOpen, Plus, Printer, Search, Trash2,
+  ArrowRightLeft, ClipboardList, Download, Edit3,
+  History, PackageOpen, Plus, Printer, RotateCcw, Search, Trash2,
 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ItemFormModal from '@/components/ItemFormModal.vue'
@@ -13,7 +13,7 @@ import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/compon
 import { api, attachmentUrl, conditionLabel, downloadCsv, formatDate, formatNumber, generateUuid, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { flaticonAssets, itemFlaticonIcon } from '@/lib/icons'
 import { useToast } from '@/composables/useToast'
-import { useMasterStore } from '@/stores/master'
+import { useMasterStore, type ItemMaster } from '@/stores/master'
 
 type StockRow = {
   variant_id: string; item_id: string; code: string; name: string; category_id?: string; category_name: string;
@@ -43,6 +43,12 @@ const loadingSo = ref(false)
 const search = ref('')
 const debouncedSearch = ref('')
 const status = ref('all')
+const unitFilter = ref('all')
+const returnTypeFilter = ref('all')
+const itemFilter = ref('all')
+const soSearch = ref('')
+const soOfficerFilter = ref('all')
+const soVarianceFilter = ref<'all' | 'surplus' | 'minus' | 'matched'>('all')
 const page = ref(1)
 const totalPages = ref(1)
 const total = ref(0)
@@ -50,6 +56,7 @@ const loading = ref(true)
 let timer: number | undefined
 
 const showItemModal = ref(false)
+const editingItem = ref<ItemMaster | null>(null)
 
 // Opening Stock Modal
 const showOpeningModal = ref(false)
@@ -83,11 +90,72 @@ const transferForm = reactive({
   notes: 'Selesai pembersihan / inspeksi karantina',
 })
 
+const unitFilterOptions = computed(() => {
+  const units = new Set<string>()
+  for (const r of rows.value) if (r.unit) units.add(r.unit)
+  return [
+    { value: 'all', label: 'Semua Satuan' },
+    ...[...units].sort((a, b) => a.localeCompare(b)).map((u) => ({ value: u, label: `Satuan: ${u}` })),
+  ]
+})
+
+const returnTypeFilterOptions = [
+  { value: 'all', label: 'Semua Tipe APD' },
+  { value: 'return_required', label: 'Wajib Kembali' },
+  { value: 'consumable', label: 'Habis Pakai' },
+]
+
+const itemNameFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.name) names.add(r.name)
+  return [
+    { value: 'all', label: 'Semua Nama Barang' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const soOfficerFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const st of stocktakes.value) if (st.officer_name) names.add(st.officer_name)
+  return [
+    { value: 'all', label: 'Semua Petugas SO' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const soVarianceFilterOptions = [
+  { value: 'all', label: 'Semua Selisih' },
+  { value: 'surplus', label: 'Surplus (+)' },
+  { value: 'minus', label: 'Kurang / Hilang (-)' },
+  { value: 'matched', label: 'Sesuai (0)' },
+]
+
+const hasStockFilters = computed(() =>
+  Boolean(search.value.trim() || status.value !== 'all' || unitFilter.value !== 'all' || returnTypeFilter.value !== 'all' || itemFilter.value !== 'all'),
+)
+
+function resetStockFilters() {
+  search.value = ''
+  debouncedSearch.value = ''
+  status.value = 'all'
+  unitFilter.value = 'all'
+  returnTypeFilter.value = 'all'
+  itemFilter.value = 'all'
+}
+
 const filteredRows = computed(() => {
   return rows.value.filter((row) => {
-    if (status.value === 'attention') return row.stock_status === 'low' || row.stock_status === 'out'
-    if (status.value === 'quarantine_damaged') return Number(row.stock_quarantine || 0) > 0 || Number(row.stock_damaged || 0) > 0
-    if (status.value !== 'all' && row.stock_status !== status.value) return false
+    if (status.value === 'attention' && !(row.stock_status === 'low' || row.stock_status === 'out')) return false
+    else if (status.value === 'quarantine_damaged' && !(Number(row.stock_quarantine || 0) > 0 || Number(row.stock_damaged || 0) > 0)) return false
+    else if (status.value !== 'all' && status.value !== 'attention' && status.value !== 'quarantine_damaged' && row.stock_status !== status.value) return false
+    if (unitFilter.value !== 'all' && row.unit !== unitFilter.value) return false
+    if (itemFilter.value !== 'all' && row.name !== itemFilter.value) return false
+    if (returnTypeFilter.value !== 'all') {
+      const itemMaster = master.items.find((i) => i.id === row.item_id)
+      const isReturnReq = itemMaster ? itemMaster.return_required : true
+      if (returnTypeFilter.value === 'return_required' && !isReturnReq) return false
+      if (returnTypeFilter.value === 'consumable' && isReturnReq) return false
+    }
     return true
   })
 })
@@ -113,6 +181,18 @@ const flatSoItems = computed(() =>
     }),
   ),
 )
+
+const filteredSoItems = computed(() => {
+  const q = soSearch.value.trim().toLowerCase()
+  return flatSoItems.value.filter((it) => {
+    if (soOfficerFilter.value !== 'all' && it.officerName !== soOfficerFilter.value) return false
+    if (soVarianceFilter.value === 'surplus' && it.diff <= 0) return false
+    if (soVarianceFilter.value === 'minus' && it.diff >= 0) return false
+    if (soVarianceFilter.value === 'matched' && it.diff !== 0) return false
+    if (!q) return true
+    return it.stocktakeNo.toLowerCase().includes(q) || it.officerName.toLowerCase().includes(q) || it.itemName.toLowerCase().includes(q) || it.reason.toLowerCase().includes(q)
+  })
+})
 
 const soSurplusTotal = computed(() => flatSoItems.value.filter((x) => x.diff > 0).reduce((s, x) => s + x.diff, 0))
 const soMinusTotal = computed(() => flatSoItems.value.filter((x) => x.diff < 0).reduce((s, x) => s + Math.abs(x.diff), 0))
@@ -471,11 +551,50 @@ function exportCsv() {
   )
 }
 
+function openAddItem() {
+  editingItem.value = null
+  showItemModal.value = true
+}
+
+function openEditItem(row: StockRow) {
+  const found = master.items.find((i) => i.id === row.item_id) || null
+  editingItem.value = found
+  showItemModal.value = true
+}
+
+async function deleteInventoryItem(row: StockRow) {
+  if (!window.confirm(`Hapus master barang "${row.name}" (${row.code}) secara permanen?`)) return
+  try {
+    await api(`/api/master/items/${row.item_id}`, { method: 'DELETE' })
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Barang "${row.name}" berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus barang (mungkin masih memiliki transaksi terkait)')
+  }
+}
+
+async function deleteOpeningStock(id: string, txNo: string) {
+  if (!window.confirm(`Hapus catatan stok awal "${txNo}"? Stok barang terkait akan dikurangi kembali sesuai jumlah stok awal.`)) return
+  try {
+    await api(`/api/inventory/opening-stock/${id}`, { method: 'DELETE' })
+    if (editingOpeningId.value === id) editingOpeningId.value = null
+    const [, hist] = await Promise.all([
+      load(),
+      api<{ data: typeof openingHistory.value }>('/api/inventory/opening-stocks'),
+      master.refresh(true),
+    ])
+    openingHistory.value = hist.data
+    toast.success(`Stok awal ${txNo} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus stok awal')
+  }
+}
+
 watch(search, (value) => {
   window.clearTimeout(timer)
   timer = window.setTimeout(() => { debouncedSearch.value = value; page.value = 1 }, 300)
 })
-watch(status, () => { page.value = 1 })
+watch([status, unitFilter, returnTypeFilter, itemFilter], () => { page.value = 1 })
 watch(debouncedSearch, load)
 
 let lastCacheVer = -1
@@ -538,7 +657,7 @@ onActivated(() => {
         <button class="secondary-button" @click="printInventory"><Printer :size="16" /> Cetak PDF</button>
         <button class="secondary-button" @click="exportCsv"><Download :size="16" /> Ekspor CSV</button>
         <button class="secondary-button highlight" @click="openOpeningStockModal"><ClipboardList :size="16" /> Input Stok Awal</button>
-        <button class="primary-button" @click="showItemModal = true"><Plus :size="17" /> Tambah Barang</button>
+        <button class="primary-button" @click="openAddItem"><Plus :size="17" /> Tambah Barang</button>
       </div>
     </section>
 
@@ -586,9 +705,15 @@ onActivated(() => {
       </div>
 
       <template v-if="activeInvTab === 'stock'">
-        <div class="table-toolbar">
+        <div class="table-toolbar filter-toolbar-rich">
           <label class="search-field"><Search :size="17" /><input v-model="search" placeholder="Cari kode atau nama barang APD..." /></label>
-          <ModernSelect v-model="status" :options="statusFilterOptions" compact :searchable="false" />
+          <ModernSelect v-model="status" :options="statusFilterOptions" compact searchable search-placeholder="Cari status stok..." />
+          <ModernSelect v-model="itemFilter" :options="itemNameFilterOptions" compact searchable search-placeholder="Cari nama barang..." />
+          <ModernSelect v-model="unitFilter" :options="unitFilterOptions" compact searchable search-placeholder="Cari satuan..." />
+          <ModernSelect v-model="returnTypeFilter" :options="returnTypeFilterOptions" compact searchable search-placeholder="Cari tipe APD..." />
+          <button v-if="hasStockFilters" type="button" class="secondary-button xs" @click="resetStockFilters">
+            <RotateCcw :size="13" /> Reset
+          </button>
         </div>
 
         <div class="table-wrap inventory-table">
@@ -640,6 +765,8 @@ onActivated(() => {
                     <ArrowRightLeft :size="13" /> Pindah Kondisi
                   </button>
                   <button class="icon-button" title="Riwayat mutasi" @click="openHistory(row)"><History :size="16" /></button>
+                  <button class="icon-button" title="Edit barang" @click="openEditItem(row)"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus barang" @click="deleteInventoryItem(row)"><Trash2 :size="15" /></button>
                 </div>
               </td>
             </tr>
@@ -655,13 +782,18 @@ onActivated(() => {
       </template>
 
       <template v-else>
-        <div class="table-toolbar" style="justify-content: space-between;">
+        <div class="table-toolbar filter-toolbar-rich" style="justify-content: space-between;">
           <div class="tag-group">
             <span class="tag-pill">Sesi SO: <b>{{ stocktakes.length }}</b></span>
             <span class="delta-pill plus">Total Surplus: +{{ formatNumber(soSurplusTotal) }}</span>
             <span class="delta-pill minus">Total Kurang / Hilang: -{{ formatNumber(soMinusTotal) }}</span>
           </div>
-          <RouterLink :to="{ name: 'stocktakes' }" class="secondary-button xs">Buka Halaman Stok Opname →</RouterLink>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <label class="search-field" style="width:240px;"><Search :size="15" /><input v-model="soSearch" placeholder="Cari No. SO, barang, petugas..." /></label>
+            <ModernSelect v-model="soOfficerFilter" :options="soOfficerFilterOptions" compact searchable search-placeholder="Cari petugas..." />
+            <ModernSelect v-model="soVarianceFilter" :options="soVarianceFilterOptions" compact searchable search-placeholder="Cari selisih..." />
+            <RouterLink :to="{ name: 'stocktakes' }" class="secondary-button xs">Buka Halaman Stok Opname →</RouterLink>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
@@ -678,7 +810,7 @@ onActivated(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in flatSoItems" :key="item.key">
+              <tr v-for="item in filteredSoItems" :key="item.key">
                 <td><strong>{{ item.stocktakeNo }}</strong><small class="table-sub">{{ formatDate(item.referenceAt) }}</small></td>
                 <td>{{ item.officerName }}</td>
                 <td><strong>{{ item.itemName }}</strong></td>
@@ -692,8 +824,8 @@ onActivated(() => {
                 </td>
                 <td>{{ item.reason }}</td>
               </tr>
-              <tr v-if="!loadingSo && !flatSoItems.length">
-                <td colspan="8"><div class="empty-state compact">Belum ada laporan selisih (+/-) dari Stok Opname.</div></td>
+              <tr v-if="!loadingSo && !filteredSoItems.length">
+                <td colspan="8"><div class="empty-state compact">Belum ada laporan selisih (+/-) yang cocok.</div></td>
               </tr>
               <tr v-if="loadingSo"><td colspan="8"><div class="loading-row">Memuat laporan selisih Stok Opname...</div></td></tr>
             </tbody>
@@ -702,7 +834,7 @@ onActivated(() => {
       </template>
     </section>
 
-    <ItemFormModal :open="showItemModal" @close="showItemModal = false" @saved="load" />
+    <ItemFormModal :open="showItemModal" :item="editingItem" @close="showItemModal = false" @saved="load" />
 
     <!-- Modal Input / Edit Stok Awal -->
     <BaseModal
@@ -716,19 +848,28 @@ onActivated(() => {
       <form id="opening-stock-form" class="modal-form" @submit.prevent="submitOpeningStock">
         <div v-if="openingHistory.length" class="lookup-box">
           <div class="lookup-header">
-            <strong>Riwayat Stok Awal Tercatat (klik untuk edit)</strong>
+            <strong>Riwayat Stok Awal Tercatat (klik untuk edit / hapus)</strong>
           </div>
           <div class="tag-group">
-            <button
-              v-for="rec in openingHistory"
-              :key="rec.id"
-              type="button"
-              class="secondary-button xs"
-              :class="{ highlight: editingOpeningId === rec.id }"
-              @click="loadOpeningForEdit(rec)"
-            >
-              {{ rec.transaction_no }} ({{ formatDate(rec.recorded_at) }} · {{ rec.opening_stock_items.length }} item)
-            </button>
+            <span v-for="rec in openingHistory" :key="rec.id" style="display:inline-flex;align-items:center;gap:4px;">
+              <button
+                type="button"
+                class="secondary-button xs"
+                :class="{ highlight: editingOpeningId === rec.id }"
+                @click="loadOpeningForEdit(rec)"
+              >
+                {{ rec.transaction_no }} ({{ formatDate(rec.recorded_at) }} · {{ rec.opening_stock_items.length }} item)
+              </button>
+              <button
+                type="button"
+                class="icon-button danger"
+                style="width:28px;height:28px;"
+                :title="`Hapus stok awal ${rec.transaction_no}`"
+                @click="deleteOpeningStock(rec.id, rec.transaction_no)"
+              >
+                <Trash2 :size="13" />
+              </button>
+            </span>
             <button v-if="editingOpeningId" type="button" class="secondary-button xs" @click="openOpeningStockModal">
               + Buat Baru
             </button>

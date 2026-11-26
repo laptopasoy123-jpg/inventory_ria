@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, Edit3, Eye, Plus, Search } from '@lucide/vue'
+import { AlertTriangle, CalendarRange, CheckCircle2, ClipboardCheck, Download, Edit3, Eye, FileDown, Plus, RotateCcw, Search, Trash2 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, conditionLabel, downloadCsv, formatDate, formatNumber, getApiCacheVersion, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatDate, formatNumber, getApiCacheVersion, imageUrlToDataUrl, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
@@ -30,12 +30,22 @@ const lostLogs = ref<Array<{
   item_name: string; unit: string; qty: number; reason: string
 }>>([])
 const loading = ref(true)
-const statusFilter = ref<'all' | 'pending_review' | 'completed' | 'surplus' | 'minus' | 'lost_logs'>('all')
+const activeTab = ref<'all' | 'lost_logs'>('all')
+
+// Comprehensive Filters
+const search = ref('')
+const dateFrom = ref('')
+const dateTo = ref('')
+const officerFilter = ref('all')
+const varianceFilter = ref<'all' | 'surplus' | 'minus' | 'matched'>('all')
+const soStatusFilter = ref<'all' | 'completed' | 'pending_review'>('all')
+
 const page = ref(1)
 const lostPage = ref(1)
 
 const showCreateModal = ref(false)
 const editingId = ref<string | null>(null)
+const editingCompleted = ref(false)
 const modalSearch = ref('')
 const saving = ref(false)
 
@@ -69,6 +79,50 @@ const statModalEmpty = ref('')
 const statModalColumns = ref<HistoryColumn[]>([])
 const statModalRows = ref<Array<Record<string, HistoryCell>>>([])
 
+const officerFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.officer_name) names.add(r.officer_name)
+  for (const o of master.officers) if (o.name) names.add(o.name)
+  return [
+    { value: 'all', label: 'Semua Petugas' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const varianceFilterOptions = [
+  { value: 'all', label: 'Semua Hasil Selisih' },
+  { value: 'surplus', label: 'Ada Surplus (+)', badge: '+' },
+  { value: 'minus', label: 'Ada Kurang / Hilang (-)', badge: '-' },
+  { value: 'matched', label: 'Sesuai (Tanpa Selisih)', badge: '0' },
+]
+
+const soStatusFilterOptions = [
+  { value: 'all', label: 'Semua Status SO' },
+  { value: 'completed', label: 'Selesai (Difinalisasi)', badge: 'Selesai' },
+  { value: 'pending_review', label: 'Menunggu Finalisasi', badge: 'Draft' },
+]
+
+const hasActiveFilters = computed(() =>
+  Boolean(search.value.trim() || dateFrom.value || dateTo.value || officerFilter.value !== 'all' || varianceFilter.value !== 'all' || soStatusFilter.value !== 'all'),
+)
+
+function resetFilters() {
+  search.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+  officerFilter.value = 'all'
+  varianceFilter.value = 'all'
+  soStatusFilter.value = 'all'
+}
+
+function inDateRange(dateStr?: string | null) {
+  if (!dateStr) return true
+  const d = dateStr.slice(0, 10)
+  if (dateFrom.value && d < dateFrom.value) return false
+  if (dateTo.value && d > dateTo.value) return false
+  return true
+}
+
 function openStatHistory(kind: 'sessions' | 'surplus' | 'minus') {
   statModalOpen.value = true
   if (kind === 'sessions') {
@@ -89,7 +143,7 @@ function openStatHistory(kind: 'sessions' | 'surplus' | 'minus') {
         officer: st.officer_name,
         count: `${st.stocktake_items?.length || 0} varian`,
         variance: `+${formatNumber(v.plus)} / -${formatNumber(v.minus)}`,
-        status: { text: st.status === 'completed' ? 'Selesai' : 'Menunggu Review', pill: st.status === 'completed' ? 'safe' : 'amber' },
+        status: { text: st.status === 'completed' ? 'Selesai' : 'Menunggu Finalisasi', pill: st.status === 'completed' ? 'safe' : 'amber' },
       }
     })
   } else if (kind === 'surplus') {
@@ -164,14 +218,50 @@ function openStatHistory(kind: 'sessions' | 'surplus' | 'minus') {
 }
 
 const filteredRows = computed(() => {
-  if (statusFilter.value === 'all' || statusFilter.value === 'lost_logs') return rows.value
-  if (statusFilter.value === 'surplus') return rows.value.filter((r) => varianceSummary(r).plus > 0)
-  if (statusFilter.value === 'minus') return rows.value.filter((r) => varianceSummary(r).minus > 0)
-  return rows.value.filter((r) => r.status === statusFilter.value)
+  const q = search.value.trim().toLowerCase()
+  return rows.value.filter((r) => {
+    if (!inDateRange(r.reference_at)) return false
+    if (officerFilter.value !== 'all' && r.officer_name !== officerFilter.value) return false
+    if (soStatusFilter.value !== 'all' && r.status !== soStatusFilter.value) return false
+    const v = varianceSummary(r)
+    if (varianceFilter.value === 'surplus' && v.plus <= 0) return false
+    if (varianceFilter.value === 'minus' && v.minus <= 0) return false
+    if (varianceFilter.value === 'matched' && (v.plus > 0 || v.minus > 0)) return false
+    if (!q) return true
+    return (
+      r.stocktake_no.toLowerCase().includes(q) ||
+      r.officer_name.toLowerCase().includes(q) ||
+      r.reference_at.slice(0, 10).includes(q) ||
+      (r.stocktake_items ?? []).some(
+        (it) =>
+          (it.item_variants?.items?.name || '').toLowerCase().includes(q) ||
+          (it.item_variants?.items?.code || '').toLowerCase().includes(q) ||
+          (it.reason || '').toLowerCase().includes(q),
+      )
+    )
+  })
 })
+
+const filteredLostLogs = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return lostLogs.value.filter((log) => {
+    if (!inDateRange(log.returned_at)) return false
+    if (!q) return true
+    return (
+      log.transaction_no.toLowerCase().includes(q) ||
+      log.employee_name.toLowerCase().includes(q) ||
+      log.item_name.toLowerCase().includes(q) ||
+      log.reason.toLowerCase().includes(q)
+    )
+  })
+})
+
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
-const pagedLostLogs = computed(() => lostLogs.value.slice((lostPage.value - 1) * 10, lostPage.value * 10))
-watch(statusFilter, () => { page.value = 1; lostPage.value = 1 })
+const pagedLostLogs = computed(() => filteredLostLogs.value.slice((lostPage.value - 1) * 10, lostPage.value * 10))
+watch([activeTab, search, dateFrom, dateTo, officerFilter, varianceFilter, soStatusFilter], () => {
+  page.value = 1
+  lostPage.value = 1
+})
 
 const filteredDraftLines = computed(() => {
   if (!modalSearch.value.trim()) return form.lines
@@ -253,6 +343,7 @@ const officerOptions = computed(() =>
 
 async function openCreateModal() {
   editingId.value = null
+  editingCompleted.value = false
   modalSearch.value = ''
   form.referenceAt = new Date().toISOString().slice(0, 10)
   showCreateModal.value = true
@@ -292,6 +383,7 @@ async function openCreateModal() {
 
 async function openEditModal(st: StocktakeRow) {
   editingId.value = st.id
+  editingCompleted.value = st.status === 'completed'
   modalSearch.value = ''
   form.referenceAt = st.reference_at.slice(0, 10)
   form.officerName = st.officer_name
@@ -317,6 +409,11 @@ async function openEditModal(st: StocktakeRow) {
     }
     for (const c of conds) {
       const prev = existingMap.get(`${v.variant_id}:${c.cond}`)
+      const preSoSystem = prev
+        ? editingCompleted.value
+          ? Math.max(0, c.qty - Number(prev.adjustment_quantity ?? 0))
+          : Number(prev.system_quantity)
+        : c.qty
       lines.push({
         variantId: v.variant_id,
         name: v.name,
@@ -324,7 +421,7 @@ async function openEditModal(st: StocktakeRow) {
         size: v.size,
         unit: v.unit,
         condition: c.cond,
-        systemQuantity: prev ? Number(prev.system_quantity) : c.qty,
+        systemQuantity: preSoSystem,
         physicalQuantity: prev ? Number(prev.physical_quantity) : c.qty,
         reason: prev?.reason || '',
       })
@@ -358,11 +455,13 @@ async function submitStocktake(finalizeNow: boolean) {
     })
     await Promise.all([load(), master.refresh(true)])
     toast.success(
-      finalizeNow
-        ? 'Stok opname difinalisasi & selisih (+/-) disesuaikan!'
-        : editingId.value
-          ? 'Draft stok opname berhasil diperbarui'
-          : 'Stok opname disimpan menunggu pemeriksaan',
+      editingCompleted.value
+        ? 'Stok opname berhasil direvisi & stok inventaris disesuaikan!'
+        : finalizeNow
+          ? 'Stok opname difinalisasi & stok gudang disesuaikan sesuai fisik aktual!'
+          : editingId.value
+            ? 'Draft stok opname berhasil diperbarui'
+            : 'Stok opname disimpan sebagai draft',
     )
     showCreateModal.value = false
   } catch (e) {
@@ -380,12 +479,27 @@ async function finalizeExisting(id: string) {
       body: JSON.stringify({ stocktakeId: id }),
     })
     await Promise.all([load(), master.refresh(true)])
-    toast.success('Stok opname difinalisasi & saldo gudang diperbarui!')
+    toast.success('Stok opname difinalisasi & stok gudang diperbarui!')
     showDetailModal.value = false
   } catch (e) {
     toast.error(e instanceof Error ? e.message : 'Gagal finalisasi')
   } finally {
     finalizing.value = false
+  }
+}
+
+async function deleteStocktake(st: StocktakeRow) {
+  const warn = st.status === 'completed'
+    ? `Hapus stok opname "${st.stocktake_no}"? Penyesuaian stok yang pernah diterapkan dari SO ini akan dikembalikan ke stok sebelumnya.`
+    : `Hapus draft stok opname "${st.stocktake_no}" secara permanen?`
+  if (!window.confirm(warn)) return
+  try {
+    await api(`/api/transactions/stocktakes/${st.id}`, { method: 'DELETE' })
+    showDetailModal.value = false
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Stok opname ${st.stocktake_no} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus stok opname')
   }
 }
 
@@ -397,12 +511,13 @@ function openDetail(st: StocktakeRow) {
 function exportVarianceCsv(st: StocktakeRow) {
   downloadCsv(
     `laporan-opname-${st.stocktake_no}.csv`,
-    ['No Opname', 'Tanggal SO', 'Kode', 'Barang', 'Ukuran', 'Kondisi', 'Stok Sistem', 'Stok Fisik', 'Selisih (+/-)', 'Status Selisih', 'Alasan'],
+    ['No Opname', 'Tanggal SO', 'Petugas', 'Kode', 'Barang', 'Ukuran', 'Kondisi', 'Stok Sistem', 'Stok Fisik', 'Selisih (+/-)', 'Status Selisih', 'Alasan'],
     st.stocktake_items.map((it) => {
       const diff = Number(it.physical_quantity) - Number(it.system_quantity)
       return [
         st.stocktake_no,
         st.reference_at.slice(0, 10),
+        st.officer_name,
         it.item_variants?.items?.code || '',
         it.item_variants?.items?.name || '',
         it.item_variants?.size || '',
@@ -417,8 +532,56 @@ function exportVarianceCsv(st: StocktakeRow) {
   )
 }
 
+async function exportVariancePdf(st: StocktakeRow) {
+  try {
+    const v = varianceSummary(st)
+    const [{ generateInventoryPdf }, companyLogoDataUrl] = await Promise.all([
+      import('@/lib/pdf-report'),
+      master.company.logoKey ? imageUrlToDataUrl(attachmentUrl(master.company.logoKey)) : Promise.resolve(null),
+    ])
+    generateInventoryPdf({
+      filename: `Laporan-Stok-Opname-${st.stocktake_no}.pdf`,
+      reportTitle: `LAPORAN STOK OPNAME · ${st.stocktake_no}`,
+      periodLabel: `Tanggal SO: ${formatDate(st.reference_at)} · Petugas: ${st.officer_name}`,
+      companyName: master.company.name,
+      companyTagline: `INVENTRA · ${master.company.tagline}`,
+      companyLogoDataUrl,
+      summaryStats: [
+        { label: 'No. Dokumen SO', value: st.stocktake_no },
+        { label: 'Total Varian Diperiksa', value: `${st.stocktake_items.length} baris` },
+        { label: 'Total Surplus (+)', value: `+${formatNumber(v.plus)} unit` },
+        { label: 'Total Kurang / Hilang (-)', value: `-${formatNumber(v.minus)} unit` },
+      ],
+      sections: [
+        {
+          title: `Rincian Hasil Pemeriksaan Fisik — ${st.stocktake_no}`,
+          subtitle: `Petugas: ${st.officer_name} · Status: ${st.status === 'completed' ? 'Selesai (Difinalisasi)' : 'Menunggu Finalisasi'}`,
+          headers: ['Kode', 'Nama Barang', 'Kondisi', 'Stok Sistem', 'Stok Fisik', 'Selisih (+/-)', 'Status', 'Alasan'],
+          rows: st.stocktake_items.map((it) => {
+            const diff = Number(it.physical_quantity) - Number(it.system_quantity)
+            const unit = it.item_variants?.items?.unit || 'unit'
+            return [
+              it.item_variants?.items?.code || '-',
+              variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size }),
+              conditionLabel(it.condition),
+              `${formatNumber(it.system_quantity)} ${unit}`,
+              `${formatNumber(it.physical_quantity)} ${unit}`,
+              `${diff > 0 ? '+' : ''}${formatNumber(diff)} ${unit}`,
+              diff > 0 ? 'Surplus' : diff < 0 ? 'Kurang' : 'Sesuai',
+              it.reason || '-',
+            ]
+          }),
+        },
+      ],
+    })
+    toast.success(`PDF Stok Opname ${st.stocktake_no} berhasil diunduh!`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal membuat PDF stok opname')
+  }
+}
+
 let lastCacheVer = -1
-onMounted(() => { lastCacheVer = getApiCacheVersion(); void load() })
+onMounted(() => { lastCacheVer = getApiCacheVersion(); void Promise.all([load(), master.refresh()]) })
 onActivated(() => {
   if (getApiCacheVersion() !== lastCacheVer) {
     lastCacheVer = getApiCacheVersion()
@@ -431,9 +594,9 @@ onActivated(() => {
   <div>
     <section class="page-intro">
       <div>
-        <p class="eyebrow">Rekonsiliasi & Laporan +/-</p>
+        <p class="eyebrow">Rekonsiliasi &amp; Laporan +/-</p>
         <h2>Stok Opname</h2>
-        <p>Bandingkan saldo sistem dengan stok fisik gudang. Draft opname tetap bisa diedit sebelum difinalisasi.</p>
+        <p>Bandingkan stok sistem dengan stok fisik aktual di gudang. Stok inventaris otomatis disesuaikan tepat sesuai angka fisik aktual.</p>
       </div>
       <div class="intro-actions">
         <button class="primary-button" @click="openCreateModal"><Plus :size="17" /> Buat Stok Opname</button>
@@ -457,15 +620,37 @@ onActivated(() => {
 
     <section class="panel data-panel">
       <div class="record-tabs">
-        <button :class="{ active: statusFilter === 'all' }" @click="statusFilter = 'all'">Semua Opname</button>
-        <button :class="{ active: statusFilter === 'pending_review' }" @click="statusFilter = 'pending_review'">Menunggu Pemeriksaan</button>
-        <button :class="{ active: statusFilter === 'completed' }" @click="statusFilter = 'completed'">Selesai (Difinalisasi)</button>
-        <button :class="{ active: statusFilter === 'lost_logs' }" @click="statusFilter = 'lost_logs'">
-          Catatan Hilang Pengembalian ({{ lostLogs.length }})
+        <button :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">Semua Stok Opname ({{ filteredRows.length }})</button>
+        <button :class="{ active: activeTab === 'lost_logs' }" @click="activeTab = 'lost_logs'">
+          Catatan Hilang Pengembalian ({{ filteredLostLogs.length }})
         </button>
       </div>
 
-      <div v-if="statusFilter === 'lost_logs'" class="table-wrap">
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field">
+          <Search :size="16" />
+          <input v-model="search" placeholder="Cari No. SO (SO-...), petugas, nama barang, atau alasan..." />
+        </label>
+
+        <div class="date-range-inline">
+          <CalendarRange :size="15" />
+          <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" aria-label="Dari tanggal" />
+          <span class="date-sep">s/d</span>
+          <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" aria-label="Sampai tanggal" />
+        </div>
+
+        <template v-if="activeTab === 'all'">
+          <ModernSelect v-model="officerFilter" :options="officerFilterOptions" compact searchable search-placeholder="Cari petugas..." />
+          <ModernSelect v-model="varianceFilter" :options="varianceFilterOptions" compact searchable search-placeholder="Cari hasil selisih..." />
+          <ModernSelect v-model="soStatusFilter" :options="soStatusFilterOptions" compact searchable search-placeholder="Cari status SO..." />
+        </template>
+
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
+      </div>
+
+      <div v-if="activeTab === 'lost_logs'" class="table-wrap">
         <table>
           <thead><tr><th>No. Pengembalian</th><th>Tanggal</th><th>Karyawan</th><th>Barang Hilang</th><th>Jumlah</th><th>Catatan / Alasan</th></tr></thead>
           <tbody>
@@ -477,17 +662,17 @@ onActivated(() => {
               <td><span class="delta-pill minus">-{{ formatNumber(log.qty) }} {{ log.unit }}</span></td>
               <td>{{ log.reason }}</td>
             </tr>
-            <tr v-if="!loading && !lostLogs.length">
-              <td colspan="6"><div class="empty-state compact"><AlertTriangle :size="24" /><strong>Belum ada catatan kehilangan dari pengembalian APD.</strong></div></td>
+            <tr v-if="!loading && !filteredLostLogs.length">
+              <td colspan="6"><div class="empty-state compact"><AlertTriangle :size="24" /><strong>Belum ada catatan kehilangan yang cocok.</strong></div></td>
             </tr>
           </tbody>
         </table>
       </div>
-      <PaginationBar v-if="statusFilter === 'lost_logs'" v-model:page="lostPage" :total-items="lostLogs.length" />
+      <PaginationBar v-if="activeTab === 'lost_logs'" v-model:page="lostPage" :total-items="filteredLostLogs.length" />
 
       <div v-else class="table-wrap">
         <table>
-          <thead><tr><th>No. & Tanggal SO</th><th>Petugas</th><th>Jumlah Varian</th><th>Laporan Selisih (+/-)</th><th>Status</th><th>Aksi</th></tr></thead>
+          <thead><tr><th>No. &amp; Tanggal SO</th><th>Petugas</th><th>Jumlah Varian</th><th>Laporan Selisih (+/-)</th><th>Status</th><th>Aksi</th></tr></thead>
           <tbody>
             <tr v-for="row in pagedRows" :key="row.id">
               <td><strong>{{ row.stocktake_no }}</strong><small class="table-sub">Tanggal SO: {{ formatDate(row.reference_at) }}</small></td>
@@ -506,30 +691,32 @@ onActivated(() => {
               </td>
               <td>
                 <div class="row-actions">
-                  <button v-if="row.status !== 'completed'" class="secondary-button xs" title="Edit sebelum finalisasi" @click="openEditModal(row)">
-                    <Edit3 :size="13" /> Edit
-                  </button>
                   <button class="secondary-button xs" @click="openDetail(row)"><Eye :size="13" /> Laporan +/-</button>
-                  <button class="icon-button" title="Ekspor CSV Opname" @click="exportVarianceCsv(row)"><Download :size="15" /></button>
+                  <button class="secondary-button xs highlight" title="Download PDF Opname" @click="exportVariancePdf(row)">
+                    <FileDown :size="13" /> PDF
+                  </button>
+                  <button class="icon-button" title="Unduh CSV Opname" @click="exportVarianceCsv(row)"><Download :size="15" /></button>
+                  <button class="icon-button" title="Edit stok opname" @click="openEditModal(row)"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus stok opname" @click="deleteStocktake(row)"><Trash2 :size="15" /></button>
                 </div>
               </td>
             </tr>
             <tr v-if="!loading && !filteredRows.length">
-              <td colspan="6"><div class="empty-state"><ClipboardCheck :size="32" /><strong>Belum ada stok opname</strong><span>Klik "Buat Stok Opname" untuk menghitung stok fisik dan melaporkan selisih + / -.</span></div></td>
+              <td colspan="6"><div class="empty-state"><ClipboardCheck :size="32" /><strong>Belum ada stok opname yang cocok</strong><span>Ubah filter atau klik "Buat Stok Opname" untuk menghitung stok fisik aktual.</span></div></td>
             </tr>
             <tr v-if="loading"><td colspan="6"><div class="loading-row">Memuat riwayat stok opname...</div></td></tr>
           </tbody>
         </table>
       </div>
-      <PaginationBar v-if="statusFilter !== 'lost_logs'" v-model:page="page" :total-items="filteredRows.length" />
+      <PaginationBar v-if="activeTab !== 'lost_logs'" v-model:page="page" :total-items="filteredRows.length" />
     </section>
 
     <!-- Create / Edit Stocktake Modal -->
     <BaseModal
       :open="showCreateModal"
-      :title="editingId ? 'Edit Draft Stok Opname' : 'Input Stok Opname Fisik'"
+      :title="editingId ? (editingCompleted ? 'Edit Stok Opname (Revisi Penyesuaian)' : 'Edit Draft Stok Opname') : 'Input Stok Opname Fisik'"
       eyebrow="Audit & Penyesuaian Stok"
-      subtitle="Masukkan tanggal SO dan jumlah fisik sebenarnya di gudang. Selisih (+) atau (-) dihitung otomatis."
+      subtitle="Masukkan tanggal SO dan jumlah fisik aktual di gudang. Stok inventaris akan disesuaikan tepat sesuai angka fisik aktual."
       size="xl"
       @close="showCreateModal = false"
     >
@@ -537,7 +724,7 @@ onActivated(() => {
         <div class="form-grid-3">
           <label class="field"><span>Tanggal SO *</span><input v-model="form.referenceAt" type="date" required /></label>
           <label class="field"><span>Petugas Opname *</span>
-            <ModernSelect v-if="activeOfficers.length" v-model="form.officerName" :options="officerOptions" required />
+            <ModernSelect v-if="activeOfficers.length" v-model="form.officerName" :options="officerOptions" searchable required />
             <input v-else v-model="form.officerName" required />
           </label>
           <label class="field"><span>Cari Barang di Daftar Opname</span>
@@ -553,7 +740,7 @@ onActivated(() => {
 
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Barang & Ukuran</th><th>Kondisi</th><th>Sistem</th><th>Fisik Gudang</th><th>Selisih (+/-)</th><th>Keterangan / Alasan</th></tr></thead>
+            <thead><tr><th>Barang &amp; Ukuran</th><th>Kondisi</th><th>Sistem</th><th>Fisik Aktual</th><th>Selisih (+/-)</th><th>Keterangan / Alasan</th></tr></thead>
             <tbody>
               <tr v-for="(line, idx) in filteredDraftLines" :key="idx">
                 <td><strong>{{ variantLabel(line) }}</strong><small class="table-sub">{{ line.code }}</small></td>
@@ -581,11 +768,11 @@ onActivated(() => {
 
       <template #footer>
         <button type="button" class="secondary-button" @click="showCreateModal = false">Batal</button>
-        <button type="button" class="secondary-button" :disabled="saving" @click="submitStocktake(false)">
+        <button v-if="!editingCompleted" type="button" class="secondary-button" :disabled="saving" @click="submitStocktake(false)">
           {{ editingId ? 'Simpan Perubahan Draft' : 'Simpan Draft' }}
         </button>
         <button type="button" class="primary-button" :disabled="saving" @click="submitStocktake(true)">
-          <CheckCircle2 :size="16" /> {{ saving ? 'Memproses...' : 'Simpan & Finalisasi Sekarang' }}
+          <CheckCircle2 :size="16" /> {{ saving ? 'Memproses...' : (editingCompleted ? 'Simpan Revisi & Sesuaikan Stok' : 'Simpan & Finalisasi Sekarang') }}
         </button>
       </template>
     </BaseModal>
@@ -600,7 +787,7 @@ onActivated(() => {
     >
       <div v-if="activeStocktake" class="detail-stack">
         <div class="summary-banner">
-          <div><small>Tanggal SO & Petugas</small><strong>{{ formatDate(activeStocktake.reference_at) }} · {{ activeStocktake.officer_name }}</strong></div>
+          <div><small>Tanggal SO &amp; Petugas</small><strong>{{ formatDate(activeStocktake.reference_at) }} · {{ activeStocktake.officer_name }}</strong></div>
           <div><small>Surplus (+)</small><strong class="text-primary">+{{ formatNumber(varianceSummary(activeStocktake).plus) }}</strong></div>
           <div><small>Kurang / Hilang (-)</small><strong class="text-red">-{{ formatNumber(varianceSummary(activeStocktake).minus) }}</strong></div>
         </div>
@@ -629,14 +816,20 @@ onActivated(() => {
         </div>
       </div>
       <template #footer>
-        <button v-if="activeStocktake && activeStocktake.status !== 'completed'" type="button" class="secondary-button" @click="openEditModal(activeStocktake)">
+        <button v-if="activeStocktake" type="button" class="secondary-button danger-soft" @click="deleteStocktake(activeStocktake)">
+          <Trash2 :size="15" /> Hapus SO
+        </button>
+        <button v-if="activeStocktake" type="button" class="secondary-button" @click="openEditModal(activeStocktake)">
           <Edit3 :size="15" /> Edit SO
         </button>
         <button v-if="activeStocktake" type="button" class="secondary-button" @click="exportVarianceCsv(activeStocktake)">
-          <Download :size="15" /> Ekspor CSV (+/-)
+          <Download :size="15" /> Ekspor CSV
+        </button>
+        <button v-if="activeStocktake" type="button" class="secondary-button highlight" @click="exportVariancePdf(activeStocktake)">
+          <FileDown :size="15" /> Download PDF
         </button>
         <button v-if="activeStocktake?.status === 'pending_review'" type="button" class="primary-button" :disabled="finalizing" @click="finalizeExisting(activeStocktake.id)">
-          <CheckCircle2 :size="15" /> Finalisasi & Sesuaikan Saldo
+          <CheckCircle2 :size="15" /> Finalisasi &amp; Sesuaikan Stok
         </button>
       </template>
     </BaseModal>

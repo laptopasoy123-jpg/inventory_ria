@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import {
-  AlertTriangle, CheckCircle2, Edit3, Eye, History, PackageCheck, PackageMinus, Plus, Search, Trash2, UsersRound,
+  AlertTriangle, CheckCircle2, Edit3, Eye, History, PackageCheck, PackageMinus, Plus, RotateCcw, Search, Trash2, UsersRound,
 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -51,6 +51,9 @@ const toast = useToast()
 const loading = ref(true)
 const search = ref('')
 const filterMode = ref<'all' | 'holding' | 'clear' | 'returned'>('all')
+const departmentFilter = ref('all')
+const contractFilter = ref('all')
+const apdFilter = ref('all')
 const page = ref(1)
 
 const issuances = ref<IssuanceRecord[]>([])
@@ -301,12 +304,47 @@ const totalHoldingEmployees = computed(() => employeeSummaries.value.filter((s) 
 const totalHoldingUnitsAll = computed(() => employeeSummaries.value.reduce((s, x) => s + x.totalHoldingUnits, 0))
 const totalReturnedEvents = computed(() => employeeSummaries.value.reduce((s, x) => s + x.returnHistory.length, 0))
 
+const departmentFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Departemen' },
+  ...master.departments.map((d) => ({ value: d.id, label: d.name, sublabel: d.code })),
+])
+
+const contractFilterOptions = [
+  { value: 'all', label: 'Semua Status Kontrak' },
+  ...contractOptions,
+]
+
+const apdFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const s of employeeSummaries.value) {
+    for (const a of s.activeItems) names.add(a.itemName)
+  }
+  return [
+    { value: 'all', label: 'Semua APD Dipegang' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const hasActiveFilters = computed(() =>
+  Boolean(search.value.trim() || departmentFilter.value !== 'all' || contractFilter.value !== 'all' || apdFilter.value !== 'all'),
+)
+
+function resetFilters() {
+  search.value = ''
+  departmentFilter.value = 'all'
+  contractFilter.value = 'all'
+  apdFilter.value = 'all'
+}
+
 const filteredRows = computed(() => {
   const q = search.value.trim().toLowerCase()
   return employeeSummaries.value.filter((row) => {
     if (filterMode.value === 'holding' && row.totalHoldingUnits <= 0) return false
     if (filterMode.value === 'clear' && row.totalHoldingUnits > 0) return false
     if (filterMode.value === 'returned' && row.returnHistory.length === 0) return false
+    if (departmentFilter.value !== 'all' && row.employee.department_id !== departmentFilter.value) return false
+    if (contractFilter.value !== 'all' && row.employee.contract_status !== contractFilter.value) return false
+    if (apdFilter.value !== 'all' && !row.activeItems.some((a) => a.itemName === apdFilter.value)) return false
     if (!q) return true
     return (
       row.employee.name.toLowerCase().includes(q) ||
@@ -319,7 +357,7 @@ const filteredRows = computed(() => {
 })
 
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
-watch([search, filterMode], () => { page.value = 1 })
+watch([search, filterMode, departmentFilter, contractFilter, apdFilter], () => { page.value = 1 })
 
 const activeSummary = computed(() =>
   activeEmployee.value ? employeeSummaries.value.find((s) => s.employee.id === activeEmployee.value?.id) || null : null,
@@ -411,6 +449,7 @@ async function deleteEmployee(emp: Employee) {
 }
 
 onMounted(load)
+onActivated(load)
 </script>
 
 <template>
@@ -468,8 +507,14 @@ onMounted(load)
         <button :class="{ active: filterMode === 'clear' }" @click="filterMode = 'clear'">Bebas Tanggungan</button>
         <button :class="{ active: filterMode === 'returned' }" @click="filterMode = 'returned'">Ada Riwayat Kembali</button>
       </div>
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari NIK, nama karyawan, departemen, atau nama APD..." /></label>
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari NIK, nama karyawan, jabatan, departemen, atau nama APD..." /></label>
+        <ModernSelect v-model="departmentFilter" :options="departmentFilterOptions" compact searchable search-placeholder="Cari departemen..." />
+        <ModernSelect v-model="contractFilter" :options="contractFilterOptions" compact searchable search-placeholder="Cari status kontrak..." />
+        <ModernSelect v-model="apdFilter" :options="apdFilterOptions" compact searchable search-placeholder="Cari APD dipegang..." />
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
 
       <div class="table-wrap">

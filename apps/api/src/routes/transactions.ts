@@ -31,6 +31,11 @@ transactionRoutes.put('/purchases/:id', zValidator('json', purchaseSchema), asyn
   return c.json({ data, message: 'Barang masuk berhasil diperbarui & stok disesuaikan' })
 })
 
+transactionRoutes.delete('/purchases/:id', async (c) => {
+  await c.get('service').deletePurchaseReceipt(c.req.param('id'))
+  return c.json({ message: 'Barang masuk berhasil dihapus & stok disesuaikan' })
+})
+
 transactionRoutes.get('/issuances', async (c) => {
   const data = await c.get('service').listIssuances({
     search: c.req.query('search'),
@@ -55,6 +60,11 @@ transactionRoutes.put('/issuances/:id', zValidator('json', issuanceSchema), asyn
   return c.json({ data, message: 'Barang keluar berhasil diperbarui & stok disesuaikan' })
 })
 
+transactionRoutes.delete('/issuances/:id', async (c) => {
+  await c.get('service').deleteIssuance(c.req.param('id'))
+  return c.json({ message: 'Barang keluar berhasil dihapus & stok dikembalikan' })
+})
+
 transactionRoutes.get('/returns', async (c) => {
   const data = await c.get('service').listReturns({
     result: c.req.query('result'),
@@ -72,6 +82,11 @@ transactionRoutes.post('/returns', zValidator('json', returnSchema), async (c) =
 transactionRoutes.put('/returns/:id', zValidator('json', returnSchema), async (c) => {
   const data = await c.get('service').updateReturn(c.req.param('id'), c.req.valid('json'))
   return c.json({ data, message: 'Pengembalian APD berhasil diperbarui' })
+})
+
+transactionRoutes.delete('/returns/:id', async (c) => {
+  await c.get('service').deleteReturn(c.req.param('id'))
+  return c.json({ message: 'Pengembalian APD berhasil dihapus & stok disesuaikan' })
 })
 
 transactionRoutes.get('/liabilities', async (c) => {
@@ -92,6 +107,11 @@ transactionRoutes.post('/stocktakes', zValidator('json', stocktakeCreateSchema),
 transactionRoutes.put('/stocktakes/:id', zValidator('json', stocktakeCreateSchema), async (c) => {
   const data = await c.get('service').updateStocktake(c.req.param('id'), c.req.valid('json'))
   return c.json({ data, message: 'Stok opname berhasil diperbarui' })
+})
+
+transactionRoutes.delete('/stocktakes/:id', async (c) => {
+  await c.get('service').deleteStocktake(c.req.param('id'))
+  return c.json({ message: 'Stok opname berhasil dihapus & stok disesuaikan' })
 })
 
 transactionRoutes.post('/stocktakes/finalize', zValidator('json', stocktakeFinalizeSchema), async (c) => {

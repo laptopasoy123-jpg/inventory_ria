@@ -299,6 +299,14 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  async deleteOpeningStock(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_opening_stock', {
+      p_id: id,
+      p_actor: await this.resolveActorId(),
+    })
+    if (error) throw error
+  }
+
   async transferCondition(input: ConditionTransferInput): Promise<string> {
     const { data, error } = await this.db.rpc('transfer_stock_condition', {
       p_payload: input,
@@ -386,15 +394,20 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  async deleteProcurement(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_procurement', { p_id: id })
+    if (error) throw error
+  }
+
   async updateProcurementStatus(id: string, status: string) {
     if (status === 'cancelled') {
       const { data: proc } = await this.db
-        .from('procurement_progress_view')
-        .select('total_received')
+        .from('procurements')
+        .select('status')
         .eq('id', id)
         .maybeSingle()
-      if (Number(proc?.total_received || 0) > 0) {
-        throw new Error('Pengadaan yang sudah memiliki barang masuk tidak dapat dibatalkan')
+      if (proc?.status === 'completed') {
+        throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
       }
     }
     const { error } = await this.db.from('procurements').update({ status }).eq('id', id)
@@ -418,6 +431,11 @@ export class SupabaseInventoryService implements InventoryService {
     })
     if (error) throw error
     return data as string
+  }
+
+  async deleteProcurementPayment(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_procurement_payment', { p_id: id })
+    if (error) throw error
   }
 
   async listPayments() {
@@ -462,6 +480,14 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  async deletePurchaseReceipt(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_purchase_receipt', {
+      p_id: id,
+      p_actor: await this.resolveActorId(),
+    })
+    if (error) throw error
+  }
+
   async listIssuances({ search, employeeId }: { search?: string; employeeId?: string }) {
     let query = this.db
       .from('issuances')
@@ -503,6 +529,14 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  async deleteIssuance(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_issuance', {
+      p_id: id,
+      p_actor: await this.resolveActorId(),
+    })
+    if (error) throw error
+  }
+
   async listReturns({ result, search }: { result?: string; search?: string }) {
     let query = this.db
       .from('returns')
@@ -537,21 +571,39 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  async deleteReturn(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_return', {
+      p_id: id,
+      p_actor: await this.resolveActorId(),
+    })
+    if (error) throw error
+  }
+
   async listStocktakes({ status }: { status?: string }) {
     let query = this.db
       .from('stocktakes')
       .select('*, stocktake_items(*, item_variants(size, items(code, name, unit)))')
       .order('created_at', { ascending: false })
-      .limit(50)
+      .limit(100)
     if (status && status !== 'all') query = query.eq('status', status)
     const { data, error } = await query
     if (error) throw error
     return data ?? []
   }
 
+  private normalizeStocktakePayload(input: StocktakeCreateInput) {
+    const now = new Date()
+    const refDate = input.referenceAt ? new Date(input.referenceAt) : now
+    const refDatePart = refDate.toISOString().slice(0, 10)
+    const todayUtc = now.toISOString().slice(0, 10)
+    const todayWib = new Date(now.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10)
+    const referenceAt = refDatePart === todayUtc || refDatePart === todayWib ? now.toISOString() : refDate.toISOString()
+    return { ...input, referenceAt }
+  }
+
   async createStocktake(input: StocktakeCreateInput): Promise<string> {
     const { data, error } = await this.db.rpc('create_stocktake', {
-      p_payload: input,
+      p_payload: this.normalizeStocktakePayload(input),
       p_actor: await this.resolveActorId(),
     })
     if (error) throw error
@@ -561,11 +613,19 @@ export class SupabaseInventoryService implements InventoryService {
   async updateStocktake(id: string, input: StocktakeCreateInput): Promise<string> {
     const { data, error } = await this.db.rpc('update_stocktake', {
       p_id: id,
-      p_payload: input,
+      p_payload: this.normalizeStocktakePayload(input),
       p_actor: await this.resolveActorId(),
     })
     if (error) throw error
     return data as string
+  }
+
+  async deleteStocktake(id: string): Promise<void> {
+    const { error } = await this.db.rpc('delete_stocktake', {
+      p_id: id,
+      p_actor: await this.resolveActorId(),
+    })
+    if (error) throw error
   }
 
   async finalizeStocktake(stocktakeId: string): Promise<string> {
@@ -589,7 +649,9 @@ export class SupabaseInventoryService implements InventoryService {
   async getEmployeeLiabilities() {
     const { data, error } = await this.db
       .from('issuance_items')
-      .select('*, issuances(transaction_no, issued_at, employees(id, nik, name, position, departments(name))), item_variants(size, items(code, name, unit, return_required))')
+      .select('*, issuances(id, transaction_no, issued_at, employee_id, employees(id, nik, name, position, department_id, departments(name))), item_variants(id, size, items(id, code, name, unit, return_required))')
+      .order('created_at', { ascending: false })
+      .limit(2000)
     if (error) throw error
     return (data ?? []).filter((row: Record<string, unknown>) => Number(row.quantity) - Number(row.returned_quantity) - Number(row.resolved_lost_quantity) > 0)
   }

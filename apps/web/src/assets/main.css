@@ -1441,3 +1441,333 @@ tr:hover .item-flaticon-box { transform: scale(1.08) rotate(-3deg); }
   object-fit: contain !important;
   border-radius: 50% !important;
 }
+
+
+/* ==========================================================================
+   INVENTRA Visual Redesign Layer (Modern Executive Teal-Slate Theme)
+   Preserves all flows & layouts while elevating visual polish, depth & UX
+   ========================================================================== */
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(14, 159, 144, 0.065) 0%, transparent 42%),
+    radial-gradient(circle at 92% 8%, rgba(20, 120, 165, 0.055) 0%, transparent 38%),
+    #f1f5f9;
+}
+
+/* Glassmorphic Topbar */
+.topbar {
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(203, 217, 229, 0.72);
+  box-shadow: 0 4px 24px rgba(15, 35, 55, 0.035);
+}
+
+.global-search {
+  background: #f4f8fa;
+  border: 1px solid #dde6ee;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, width 0.2s ease;
+}
+.global-search:focus-within {
+  background: #ffffff;
+  border-color: #0e9488;
+  box-shadow: 0 0 0 3.5px rgba(14, 148, 136, 0.13);
+}
+
+/* Sidebar Refinement */
+.sidebar {
+  background: linear-gradient(180deg, #071b24 0%, #0b2632 52%, #071921 100%);
+  box-shadow: 6px 0 32px rgba(7, 25, 35, 0.14);
+}
+.sidebar::-webkit-scrollbar {
+  width: 5px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(148, 198, 200, 0.18);
+  border-radius: 99px;
+}
+.nav-list a {
+  border: 1px solid transparent;
+}
+.nav-list a:hover {
+  background: rgba(255, 255, 255, 0.065);
+  border-color: rgba(255, 255, 255, 0.06);
+  transform: translateX(2px);
+}
+.nav-list a.router-link-exact-active {
+  background: linear-gradient(100deg, #109688 0%, #0b786d 100%);
+  border-color: rgba(110, 231, 215, 0.28);
+  box-shadow: 0 8px 20px rgba(8, 108, 98, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* Page Intro Header Accent */
+.page-intro {
+  padding-bottom: 4px;
+}
+.page-intro h2 {
+  background: linear-gradient(120deg, #0d2230 0%, #0b5d56 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: 26px;
+}
+
+/* Elevated Panels & Cards */
+.panel {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(215, 226, 236, 0.85);
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(15, 35, 55, 0.042), 0 1px 2px rgba(15, 35, 55, 0.03);
+}
+
+.stat-card,
+.inv-stat-card,
+.mini-stat-btn {
+  border-radius: 16px;
+  border: 1px solid rgba(213, 225, 235, 0.88);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdfe 100%);
+  box-shadow: 0 6px 20px rgba(15, 35, 55, 0.038);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.stat-card::after,
+.inv-stat-card::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #14b8a6, #0b7d72, #0e7490);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.stat-card.clickable:hover,
+.inv-stat-card.clickable:hover,
+.mini-stat-btn:hover {
+  transform: translateY(-3px);
+  border-color: #8fd3ca;
+  box-shadow: 0 14px 30px rgba(11, 125, 114, 0.11);
+}
+.stat-card.clickable:hover::after,
+.inv-stat-card.clickable:hover::after {
+  opacity: 1;
+}
+
+/* Buttons */
+.primary-button {
+  background: linear-gradient(135deg, #109285 0%, #0b746a 100%);
+  border: 1px solid #0a6e65;
+  box-shadow: 0 6px 16px rgba(11, 125, 114, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.primary-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0c8276 0%, #086259 100%);
+  box-shadow: 0 10px 22px rgba(11, 125, 114, 0.3);
+  transform: translateY(-1px);
+}
+.secondary-button {
+  background: #ffffff;
+  border-color: #d6e0ea;
+  box-shadow: 0 1px 2px rgba(15, 35, 55, 0.03);
+}
+.secondary-button:hover:not(:disabled) {
+  background: #f4f9fa;
+  border-color: #b4c9d4;
+  transform: translateY(-1px);
+}
+.secondary-button.danger-soft {
+  background: #fff5f5;
+  border-color: #f4c6c5;
+  color: #b92b27;
+}
+.secondary-button.danger-soft:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #ef9a9a;
+  color: #991b1b;
+}
+
+/* Dashboard Editable Year Input Pill */
+.year-input-pill {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 12px;
+  background: #ffffff;
+  border: 1px solid #d4e2ea;
+  border-radius: 11px;
+  color: #3f5366;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(15, 35, 55, 0.03);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.year-input-pill svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.year-input-pill input {
+  width: 68px;
+  height: 28px;
+  border: 1px solid #e2ebf0;
+  border-radius: 7px;
+  background: #f5f9fb;
+  padding: 0 7px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 13px;
+  color: #0a685f;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.year-input-pill:focus-within {
+  border-color: #0e9488;
+  box-shadow: 0 0 0 3px rgba(14, 148, 136, 0.14);
+}
+.year-input-pill input:focus {
+  background: #ffffff;
+  border-color: #7cc9c0;
+}
+
+/* Rich Multi-Filter Toolbar & Inline Date Range */
+.filter-toolbar-rich {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 13px 16px;
+  background: linear-gradient(180deg, #fafcfd 0%, #f5f9fb 100%);
+  border-bottom: 1px solid #e3ebf2;
+}
+.filter-toolbar-rich .search-field {
+  flex: 1 1 240px;
+  min-width: 210px;
+  max-width: 380px;
+  background: #ffffff;
+  border-color: #d6e2ec;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.filter-toolbar-rich .search-field:focus-within {
+  border-color: #0e9488;
+  box-shadow: 0 0 0 3px rgba(14, 148, 136, 0.12);
+}
+.filter-toolbar-rich .modern-select-root {
+  flex: 0 1 195px;
+  min-width: 155px;
+}
+
+.date-range-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 10px;
+  background: #ffffff;
+  border: 1px solid #d6e2ec;
+  border-radius: 9px;
+  color: #5c7082;
+}
+.date-range-inline svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.date-range-inline .compact-date {
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  height: 32px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f3342;
+  outline: none;
+}
+.date-range-inline:focus-within {
+  border-color: #0e9488;
+  box-shadow: 0 0 0 3px rgba(14, 148, 136, 0.12);
+}
+
+/* Tables Polish */
+th {
+  background: linear-gradient(180deg, #f7fafc 0%, #f1f6f9 100%);
+  color: #556679;
+  border-bottom: 1px solid #dde6ef;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+tbody tr {
+  transition: background-color 0.14s ease;
+}
+tbody tr:hover {
+  background: #f4fbfa;
+}
+
+/* Record Tabs Pill-Underline Polish */
+.record-tabs {
+  background: #ffffff;
+  padding-top: 10px;
+}
+.record-tabs button {
+  border-radius: 8px 8px 0 0;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+.record-tabs button:hover:not(.active) {
+  background: #f5f9fb;
+  color: #203344;
+}
+.record-tabs button.active {
+  color: #0a746a;
+  font-weight: 700;
+  border-bottom-width: 2.5px;
+  background: linear-gradient(180deg, transparent 0%, rgba(14, 148, 136, 0.06) 100%);
+}
+
+/* Quick Actions Chips */
+.quick-chip {
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbfa 100%);
+  border-color: #cde6e2;
+  box-shadow: 0 3px 10px rgba(11, 125, 114, 0.06);
+}
+.quick-chip:hover {
+  background: linear-gradient(135deg, #0e8b7e 0%, #0a7066 100%);
+  border-color: #0a7066;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(11, 125, 114, 0.22);
+}
+
+/* Bar Chart Elevation */
+.bar.incoming {
+  background: linear-gradient(180deg, #16b5a4 0%, #0b7d72 100%);
+  border-radius: 5px 5px 0 0;
+}
+.bar.outgoing {
+  background: linear-gradient(180deg, #9ad2d4 0%, #6baab0 100%);
+  border-radius: 5px 5px 0 0;
+}
+
+/* ModernSelect Focus & Hover Polish */
+.modern-select-trigger {
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+.modern-select-trigger:hover:not(:disabled) {
+  border-color: #93cdc6;
+  background: #fafefd;
+}
+.modern-select-menu {
+  border-radius: 13px;
+  border: 1px solid #d5e4e8;
+  box-shadow: 0 18px 42px rgba(10, 34, 48, 0.15);
+}
+
+@media (max-width: 720px) {
+  .filter-toolbar-rich .search-field,
+  .filter-toolbar-rich .modern-select-root,
+  .date-range-inline {
+    flex: 1 1 100%;
+    max-width: 100%;
+    width: 100%;
+  }
+  .date-range-inline {
+    justify-content: space-between;
+  }
+}

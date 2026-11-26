@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowUpDown, CheckCircle2, Edit3, Eye, PackageCheck, Plus, Search, ShoppingBag, Trash2, Truck, XCircle } from '@lucide/vue'
+import { ArrowUpDown, CalendarRange, CheckCircle2, Edit3, Eye, PackageCheck, Plus, RotateCcw, Search, ShoppingBag, Trash2, Truck, XCircle } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -59,6 +59,13 @@ const rows = ref<ProcurementRow[]>([])
 const loading = ref(true)
 const statusFilter = ref('all')
 const search = ref('')
+const supplierFilter = ref('all')
+const vendorTypeFilter = ref('all')
+const departmentFilter = ref('all')
+const fundingFilter = ref('all')
+const methodFilter = ref('all')
+const dateFrom = ref('')
+const dateTo = ref('')
 const page = ref(1)
 
 // Create / Edit Modal
@@ -92,10 +99,75 @@ const receiptProcId = ref<string | null>(null)
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
+const supplierFilterOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of rows.value) if (r.supplier_name) names.add(r.supplier_name)
+  for (const s of master.suppliers) if (s.name) names.add(s.name)
+  return [
+    { value: 'all', label: 'Semua Supplier / Toko' },
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+  ]
+})
+
+const vendorTypeFilterOptions = [
+  { value: 'all', label: 'Semua Jenis Vendor' },
+  { value: 'supplier', label: 'Supplier Resmi' },
+  { value: 'online_shop', label: 'Toko Online' },
+]
+
+const departmentFilterOptions = computed(() => [
+  { value: 'all', label: 'Semua Departemen' },
+  ...master.departments.map((d) => ({ value: d.name, label: d.name, sublabel: d.code })),
+])
+
+const fundingFilterOptions = [
+  { value: 'all', label: 'Semua Sumber Dana' },
+  { value: 'company', label: 'Dana Perusahaan' },
+  { value: 'advanced', label: 'Talangan' },
+]
+
+const methodFilterOptions = [
+  { value: 'all', label: 'Semua Metode' },
+  { value: 'transfer', label: 'Transfer Bank' },
+  { value: 'cash', label: 'Tunai / Kas' },
+]
+
+const hasActiveFilters = computed(() =>
+  Boolean(
+    search.value.trim() ||
+    supplierFilter.value !== 'all' ||
+    vendorTypeFilter.value !== 'all' ||
+    departmentFilter.value !== 'all' ||
+    fundingFilter.value !== 'all' ||
+    methodFilter.value !== 'all' ||
+    dateFrom.value ||
+    dateTo.value,
+  ),
+)
+
+function resetFilters() {
+  search.value = ''
+  supplierFilter.value = 'all'
+  vendorTypeFilter.value = 'all'
+  departmentFilter.value = 'all'
+  fundingFilter.value = 'all'
+  methodFilter.value = 'all'
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
 const filteredRows = computed(() => {
   const list = rows.value.filter((r) => {
     if (statusFilter.value === 'pending_progress' && !(r.status === 'ordered' || r.status === 'partial')) return false
     else if (statusFilter.value !== 'all' && statusFilter.value !== 'pending_progress' && r.status !== statusFilter.value) return false
+    if (supplierFilter.value !== 'all' && r.supplier_name !== supplierFilter.value) return false
+    if (vendorTypeFilter.value !== 'all' && (r.vendor_type || 'supplier') !== vendorTypeFilter.value) return false
+    if (departmentFilter.value !== 'all' && (r.department_name || '') !== departmentFilter.value) return false
+    if (fundingFilter.value !== 'all' && r.funding_source !== fundingFilter.value) return false
+    if (methodFilter.value !== 'all' && (r.payment_method || 'transfer') !== methodFilter.value) return false
+    const d = (r.procurement_date || '').slice(0, 10)
+    if (dateFrom.value && d < dateFrom.value) return false
+    if (dateTo.value && d > dateTo.value) return false
     if (!search.value.trim()) return true
     const q = search.value.toLowerCase()
     return (
@@ -103,7 +175,8 @@ const filteredRows = computed(() => {
       (r.po_number || '').toLowerCase().includes(q) ||
       (r.pr_number || '').toLowerCase().includes(q) ||
       r.supplier_name.toLowerCase().includes(q) ||
-      r.reason.toLowerCase().includes(q)
+      r.reason.toLowerCase().includes(q) ||
+      r.items.some((it) => (it.item_variants?.items?.name || '').toLowerCase().includes(q))
     )
   })
   return [...list].sort((a, b) => {
@@ -155,7 +228,7 @@ const variantOptions = computed(() =>
 )
 
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
-watch([statusFilter, search], () => { page.value = 1 })
+watch([statusFilter, search, supplierFilter, vendorTypeFilter, departmentFilter, fundingFilter, methodFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function variantInfo(variantId: string) {
   return master.variants.find((v) => v.variant_id === variantId) || null
@@ -399,20 +472,33 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'completed') {
 }
 
 async function cancelProcurement(row: ProcurementRow) {
-  if (Number(row.total_received) > 0) {
-    toast.error('Pengadaan yang sudah ada barang masuk tidak dapat dibatalkan')
-    return
-  }
-  if (!window.confirm(`Batalkan pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Nomor PO tidak akan tampil lagi di Barang Masuk.`)) return
+  if (row.status === 'completed' || row.status === 'cancelled') return
+  const msg = Number(row.total_received) > 0
+    ? `Batalkan sisa pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Barang yang sudah diterima (${formatNumber(row.total_received)} unit) tetap tersimpan di stok gudang, dan sisa pesanan dihentikan.`
+    : `Batalkan pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Nomor PO tidak akan tampil lagi di Barang Masuk.`
+  if (!window.confirm(msg)) return
   try {
     await api(`/api/procurements/${row.id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'cancelled' }),
     })
+    showDetailModal.value = false
     toast.success(`Pengadaan ${row.procurement_no} berhasil dibatalkan`, 'Pengadaan Dibatalkan')
     await load()
   } catch (e) {
     toast.error(e instanceof Error ? e.message : 'Gagal membatalkan pengadaan')
+  }
+}
+
+async function deleteProcurement(row: ProcurementRow) {
+  if (!window.confirm(`Hapus permanen data pengadaan "${row.procurement_no}"${row.po_number ? ` (PO: ${row.po_number})` : ''}? Stok barang yang sudah diterima sebelumnya tetap aman di inventaris.`)) return
+  try {
+    await api(`/api/procurements/${row.id}`, { method: 'DELETE' })
+    showDetailModal.value = false
+    toast.success(`Pengadaan ${row.procurement_no} berhasil dihapus`)
+    await load()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus pengadaan')
   }
 }
 
@@ -478,8 +564,22 @@ onActivated(() => {
         <button :class="{ active: statusFilter === 'completed' }" @click="statusFilter = 'completed'">Terpenuhi</button>
         <button :class="{ active: statusFilter === 'cancelled' }" @click="statusFilter = 'cancelled'">Dibatalkan ({{ rows.filter(r => r.status === 'cancelled').length }})</button>
       </div>
-      <div class="table-toolbar">
-        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Pengadaan (PGD), No. PO, PR, toko online / supplier..." /></label>
+      <div class="table-toolbar filter-toolbar-rich">
+        <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari No. Pengadaan (PGD), No. PO, PR, barang, atau supplier..." /></label>
+        <div class="date-range-inline">
+          <CalendarRange :size="15" />
+          <input v-model="dateFrom" type="date" class="compact-date" title="Dari tanggal" />
+          <span class="date-sep">s/d</span>
+          <input v-model="dateTo" type="date" class="compact-date" title="Sampai tanggal" />
+        </div>
+        <ModernSelect v-model="supplierFilter" :options="supplierFilterOptions" compact searchable search-placeholder="Cari supplier / toko..." />
+        <ModernSelect v-model="vendorTypeFilter" :options="vendorTypeFilterOptions" compact searchable search-placeholder="Cari jenis vendor..." />
+        <ModernSelect v-model="departmentFilter" :options="departmentFilterOptions" compact searchable search-placeholder="Cari departemen..." />
+        <ModernSelect v-model="fundingFilter" :options="fundingFilterOptions" compact searchable search-placeholder="Cari sumber dana..." />
+        <ModernSelect v-model="methodFilter" :options="methodFilterOptions" compact searchable search-placeholder="Cari metode..." />
+        <button v-if="hasActiveFilters" type="button" class="secondary-button xs" @click="resetFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
 
       <div class="table-wrap">
@@ -545,6 +645,14 @@ onActivated(() => {
                     <PackageCheck :size="13" /> Terima
                   </button>
                   <button
+                    v-if="row.status === 'ordered' || row.status === 'partial' || row.status === 'draft'"
+                    class="secondary-button xs danger-soft"
+                    title="Batalkan pengadaan yang sedang berjalan"
+                    @click="cancelProcurement(row)"
+                  >
+                    <XCircle :size="13" /> Cancel
+                  </button>
+                  <button
                     v-if="row.status !== 'cancelled'"
                     class="icon-button"
                     title="Edit pengadaan"
@@ -552,15 +660,8 @@ onActivated(() => {
                   >
                     <Edit3 :size="15" />
                   </button>
-                  <button
-                    v-if="(row.status === 'ordered' || row.status === 'draft') && Number(row.total_received) === 0"
-                    class="icon-button danger"
-                    title="Batalkan pengadaan (belum ada barang masuk)"
-                    @click="cancelProcurement(row)"
-                  >
-                    <XCircle :size="15" />
-                  </button>
                   <button class="icon-button" title="Lihat detail & progress" @click="openDetail(row.id)"><Eye :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus pengadaan" @click="deleteProcurement(row)"><Trash2 :size="15" /></button>
                 </div>
               </td>
             </tr>
@@ -735,6 +836,9 @@ onActivated(() => {
       </div>
       <template #footer>
         <button type="button" class="secondary-button" @click="showDetailModal = false">Tutup</button>
+        <button v-if="detail && (detail.status === 'ordered' || detail.status === 'partial' || detail.status === 'draft')" type="button" class="secondary-button danger-soft" @click="cancelProcurement(detail)">
+          <XCircle :size="15" /> Cancel Pengadaan
+        </button>
         <button v-if="detail && (detail.status === 'ordered' || detail.status === 'partial')" type="button" class="primary-button" @click="showDetailModal = false; openReceiveFor(detail.id)">
           <PackageCheck :size="16" /> Terima Barang Datang
         </button>

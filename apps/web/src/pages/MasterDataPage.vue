@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Building2, Edit3, ImagePlus, Package, Plus, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
+import { Building2, Edit3, ImagePlus, Package, Plus, RotateCcw, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ItemFormModal from '@/components/ItemFormModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -17,6 +17,10 @@ const toast = useToast()
 
 const activeTab = ref<MasterTab>('items')
 const search = ref('')
+const statusFilter = ref<'all' | 'active' | 'inactive'>('all')
+const unitFilter = ref('all')
+const returnReqFilter = ref<'all' | 'yes' | 'no'>('all')
+const officerRoleFilter = ref('all')
 const page = ref(1)
 const saving = ref(false)
 const savingCompany = ref(false)
@@ -137,29 +141,87 @@ const tabs = [
   { key: 'funders' as const, label: 'Pihak Penalang', icon: Wallet },
 ]
 
+const statusFilterOptions = [
+  { value: 'all', label: 'Semua Status' },
+  { value: 'active', label: 'Aktif' },
+  { value: 'inactive', label: 'Nonaktif' },
+]
+
+const unitFilterOptions = computed(() => {
+  const units = new Set<string>()
+  for (const it of master.items) if (it.unit) units.add(it.unit)
+  return [
+    { value: 'all', label: 'Semua Satuan' },
+    ...[...units].sort((a, b) => a.localeCompare(b)).map((u) => ({ value: u, label: `Satuan: ${u}` })),
+  ]
+})
+
+const returnReqFilterOptions = [
+  { value: 'all', label: 'Semua Tipe APD' },
+  { value: 'yes', label: 'Wajib Kembali' },
+  { value: 'no', label: 'Habis Pakai' },
+]
+
+const officerRoleFilterOptions = computed(() => {
+  const roles = new Set<string>()
+  for (const o of master.officers) if (o.role_label) roles.add(o.role_label)
+  return [
+    { value: 'all', label: 'Semua Peran Petugas' },
+    ...[...roles].sort((a, b) => a.localeCompare(b)).map((r) => ({ value: r, label: r })),
+  ]
+})
+
+const hasMasterFilters = computed(() =>
+  Boolean(search.value.trim() || statusFilter.value !== 'all' || unitFilter.value !== 'all' || returnReqFilter.value !== 'all' || officerRoleFilter.value !== 'all'),
+)
+
+function resetMasterFilters() {
+  search.value = ''
+  statusFilter.value = 'all'
+  unitFilter.value = 'all'
+  returnReqFilter.value = 'all'
+  officerRoleFilter.value = 'all'
+}
+
+function matchActive(active: boolean) {
+  if (statusFilter.value === 'active') return active !== false
+  if (statusFilter.value === 'inactive') return active === false
+  return true
+}
+
 const filteredItems = computed(() => {
   const q = search.value.toLowerCase()
-  return master.items.filter((i) => !q || i.name.toLowerCase().includes(q) || i.code.toLowerCase().includes(q))
+  return master.items.filter((i) => {
+    if (!matchActive(i.active)) return false
+    if (unitFilter.value !== 'all' && i.unit !== unitFilter.value) return false
+    if (returnReqFilter.value === 'yes' && !i.return_required) return false
+    if (returnReqFilter.value === 'no' && i.return_required) return false
+    return !q || i.name.toLowerCase().includes(q) || i.code.toLowerCase().includes(q)
+  })
 })
 const filteredDepartments = computed(() => {
   const q = search.value.toLowerCase()
-  return master.departments.filter((d) => !q || d.name.toLowerCase().includes(q) || d.code.toLowerCase().includes(q))
+  return master.departments.filter((d) => matchActive(d.active) && (!q || d.name.toLowerCase().includes(q) || d.code.toLowerCase().includes(q)))
 })
 const filteredOfficers = computed(() => {
   const q = search.value.toLowerCase()
-  return master.officers.filter((o) => !q || o.name.toLowerCase().includes(q) || o.role_label.toLowerCase().includes(q))
+  return master.officers.filter((o) => {
+    if (!matchActive(o.active)) return false
+    if (officerRoleFilter.value !== 'all' && o.role_label !== officerRoleFilter.value) return false
+    return !q || o.name.toLowerCase().includes(q) || o.role_label.toLowerCase().includes(q)
+  })
 })
 const filteredSuppliers = computed(() => {
   const q = search.value.toLowerCase()
-  return master.suppliers.filter((s) => (s.vendor_type || 'supplier') === 'supplier' && (!q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)))
+  return master.suppliers.filter((s) => matchActive(s.active) && (s.vendor_type || 'supplier') === 'supplier' && (!q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)))
 })
 const filteredOnlineShops = computed(() => {
   const q = search.value.toLowerCase()
-  return master.suppliers.filter((s) => s.vendor_type === 'online_shop' && (!q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)))
+  return master.suppliers.filter((s) => matchActive(s.active) && s.vendor_type === 'online_shop' && (!q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)))
 })
 const filteredFunders = computed(() => {
   const q = search.value.toLowerCase()
-  return master.funders.filter((f) => !q || f.name.toLowerCase().includes(q))
+  return master.funders.filter((f) => matchActive(f.active) && (!q || f.name.toLowerCase().includes(q)))
 })
 
 const paginate = <T>(list: T[]) => list.slice((page.value - 1) * 10, page.value * 10)
@@ -174,7 +236,7 @@ const activeTotalCount = computed(() => {
   }
   return map[activeTab.value]
 })
-watch([activeTab, search], () => { page.value = 1 })
+watch([activeTab, search, statusFilter, unitFilter, returnReqFilter, officerRoleFilter], () => { page.value = 1 })
 
 function openAdd() {
   if (activeTab.value === 'items') {
@@ -379,8 +441,17 @@ onMounted(() => {
       <div class="record-tabs">
         <button v-for="t in tabs" :key="t.key" :class="{ active: activeTab === t.key }" @click="activeTab = t.key">{{ t.label }}</button>
       </div>
-      <div class="table-toolbar">
+      <div class="table-toolbar filter-toolbar-rich">
         <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="Cari kode, nama, atau keterangan..." /></label>
+        <ModernSelect v-model="statusFilter" :options="statusFilterOptions" compact searchable search-placeholder="Cari status..." />
+        <template v-if="activeTab === 'items'">
+          <ModernSelect v-model="unitFilter" :options="unitFilterOptions" compact searchable search-placeholder="Cari satuan..." />
+          <ModernSelect v-model="returnReqFilter" :options="returnReqFilterOptions" compact searchable search-placeholder="Cari tipe APD..." />
+        </template>
+        <ModernSelect v-if="activeTab === 'officers'" v-model="officerRoleFilter" :options="officerRoleFilterOptions" compact searchable search-placeholder="Cari peran..." />
+        <button v-if="hasMasterFilters" type="button" class="secondary-button xs" @click="resetMasterFilters">
+          <RotateCcw :size="13" /> Reset
+        </button>
       </div>
 
       <!-- Items Table -->
