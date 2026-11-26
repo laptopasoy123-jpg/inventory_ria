@@ -7,7 +7,7 @@ import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import StatHistoryModal, { type HistoryCell, type HistoryColumn } from '@/components/StatHistoryModal.vue'
-import { api, conditionLabel, formatDate, formatNumber, variantLabel } from '@/lib/api'
+import { api, conditionLabel, formatDate, formatNumber, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore, type Employee } from '@/stores/master'
 
@@ -452,8 +452,17 @@ async function deleteEmployee(emp: Employee) {
   }
 }
 
-onMounted(load)
-onActivated(load)
+let lastCacheVer = -1
+onMounted(() => {
+  lastCacheVer = getApiCacheVersion()
+  void load()
+})
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void load()
+  }
+})
 </script>
 
 <template>

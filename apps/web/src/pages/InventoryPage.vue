@@ -759,12 +759,12 @@ onActivated(() => {
               </tr>
             </thead>
           <tbody>
-            <tr v-for="(row, rowIdx) in pagedRows" :key="row.variant_id" class="inv-row-animated" :style="{ animationDelay: `${rowIdx * 35}ms` }">
+            <tr v-for="row in pagedRows" :key="row.variant_id">
               <td>
                 <span class="item-cell">
-                  <img v-if="row.photo_key" :src="attachmentUrl(row.photo_key)" class="item-thumb" alt="Foto barang" />
+                  <img v-if="row.photo_key" :src="attachmentUrl(row.photo_key)" class="item-thumb" alt="Foto barang" loading="lazy" decoding="async" />
                   <span v-else class="item-flaticon-box">
-                    <img :src="itemFlaticonIcon(row.name)" :alt="row.name" loading="lazy" />
+                    <img :src="itemFlaticonIcon(row.name)" :alt="row.name" loading="lazy" decoding="async" />
                   </span>
                   <span><strong>{{ row.name }}</strong><small>{{ row.code }}</small></span>
                 </span>

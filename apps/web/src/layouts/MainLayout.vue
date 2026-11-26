@@ -296,7 +296,7 @@ onMounted(() => {
       </header>
       <div class="page-content">
         <RouterView v-slot="{ Component }">
-          <KeepAlive :max="8">
+          <KeepAlive :max="12">
             <component :is="Component" />
           </KeepAlive>
         </RouterView>

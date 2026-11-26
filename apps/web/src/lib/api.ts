@@ -26,7 +26,8 @@ export class ApiError extends Error {
 
 const getCache = new Map<string, { ts: number; data: unknown }>()
 const inFlightGets = new Map<string, Promise<unknown>>()
-const GET_CACHE_TTL_MS = 60_000
+const GET_CACHE_TTL_MS = 120_000
+const dateCache = new Map<string, string>()
 let cacheVersion = 0
 
 export function getApiCacheVersion() {
@@ -135,9 +136,13 @@ export const formatCurrency = (value: number | string) =>
 
 export const formatDate = (value?: string | null) => {
   if (!value) return '—'
+  const cached = dateCache.get(value)
+  if (cached !== undefined) return cached
   const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return value
-  return dateFmt.format(d)
+  const formatted = Number.isNaN(d.getTime()) ? value : dateFmt.format(d)
+  if (dateCache.size > 500) dateCache.clear()
+  dateCache.set(value, formatted)
+  return formatted
 }
 
 export const conditionLabel = (condition: string) => {

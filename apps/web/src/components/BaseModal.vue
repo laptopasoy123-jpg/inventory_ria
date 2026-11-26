@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onDeactivated, onUnmounted, watch } from 'vue'
 import { X } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{
@@ -14,19 +14,33 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
+let keyBound = false
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && props.open) emit('close')
 }
 
+function detach() {
+  if (keyBound) {
+    window.removeEventListener('keydown', onKeydown)
+    keyBound = false
+  }
+  document.body.style.overflow = ''
+}
+
 watch(() => props.open, (val) => {
   document.body.style.overflow = val ? 'hidden' : ''
-})
+  if (val && !keyBound) {
+    window.addEventListener('keydown', onKeydown)
+    keyBound = true
+  } else if (!val && keyBound) {
+    window.removeEventListener('keydown', onKeydown)
+    keyBound = false
+  }
+}, { immediate: true })
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => {
-  window.removeEventListener('keydown', onKeydown)
-  document.body.style.overflow = ''
-})
+onDeactivated(detach)
+onUnmounted(detach)
 </script>
 
 <template>

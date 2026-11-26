@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onDeactivated, onUnmounted, ref, watch } from 'vue'
 import { Check, ChevronDown, Search } from '@lucide/vue'
 
 export interface SelectOption {
@@ -53,6 +53,7 @@ const showSearch = computed(() =>
 )
 
 const filteredOptions = computed(() => {
+  if (!isOpen.value) return []
   const q = query.value.trim().toLowerCase()
   if (!q) return props.options
   return props.options.filter(
@@ -135,26 +136,55 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+let rafId = 0
+let listenersBound = false
+
 function onWindowReposition() {
-  if (isOpen.value) updatePosition()
+  if (!isOpen.value || rafId) return
+  rafId = window.requestAnimationFrame(() => {
+    rafId = 0
+    if (isOpen.value) updatePosition()
+  })
 }
+
+function bindListeners() {
+  if (listenersBound) return
+  listenersBound = true
+  document.addEventListener('mousedown', onDocClick)
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('scroll', onWindowReposition, { capture: true, passive: true })
+  window.addEventListener('resize', onWindowReposition, { passive: true })
+}
+
+function unbindListeners() {
+  if (rafId) {
+    window.cancelAnimationFrame(rafId)
+    rafId = 0
+  }
+  if (!listenersBound) return
+  listenersBound = false
+  document.removeEventListener('mousedown', onDocClick)
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('scroll', onWindowReposition, true)
+  window.removeEventListener('resize', onWindowReposition)
+}
+
+watch(isOpen, (open) => {
+  if (open) bindListeners()
+  else unbindListeners()
+})
 
 watch(filteredOptions, () => {
   if (isOpen.value) void nextTick(updatePosition)
 })
 
-onMounted(() => {
-  document.addEventListener('mousedown', onDocClick)
-  window.addEventListener('keydown', onKeydown)
-  window.addEventListener('scroll', onWindowReposition, true)
-  window.addEventListener('resize', onWindowReposition)
+onDeactivated(() => {
+  if (isOpen.value) closeMenu()
+  unbindListeners()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('mousedown', onDocClick)
-  window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('scroll', onWindowReposition, true)
-  window.removeEventListener('resize', onWindowReposition)
+  unbindListeners()
 })
 </script>
 
@@ -178,7 +208,7 @@ onUnmounted(() => {
       :aria-expanded="isOpen"
       @click="toggleMenu"
     >
-      <img v-if="selectedOption?.icon" :src="selectedOption.icon" class="ms-trigger-icon" alt="" />
+      <img v-if="selectedOption?.icon" :src="selectedOption.icon" class="ms-trigger-icon" alt="" decoding="async" />
       <span class="ms-trigger-text">
         <span class="ms-label">{{ selectedOption ? selectedOption.label : placeholder }}</span>
         <span v-if="selectedOption?.badge" class="ms-trigger-badge">{{ selectedOption.badge }}</span>
@@ -209,7 +239,7 @@ onUnmounted(() => {
               :disabled="opt.disabled"
               @click="pickOption(opt)"
             >
-              <img v-if="opt.icon" :src="opt.icon" class="ms-opt-icon" alt="" />
+              <img v-if="opt.icon" :src="opt.icon" class="ms-opt-icon" alt="" loading="lazy" decoding="async" />
               <div class="ms-opt-body">
                 <div class="ms-opt-main">
                   <span>{{ opt.label }}</span>

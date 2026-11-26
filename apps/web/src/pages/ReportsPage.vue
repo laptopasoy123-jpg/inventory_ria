@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { AlertTriangle, CalendarRange, CheckSquare, Download, Edit3, Eye, FileDown, Printer, RefreshCw, RotateCcw, Search, Trash2 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
-import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, getApiCacheVersion, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
 import type { PdfSectionTable } from '@/lib/pdf-report'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
@@ -537,8 +537,17 @@ function exportActiveCsv() {
   }
 }
 
-onMounted(() => { void loadAll(true) })
-onActivated(() => { void loadAll(true) })
+let lastCacheVer = -1
+onMounted(() => {
+  lastCacheVer = getApiCacheVersion()
+  void loadAll(false)
+})
+onActivated(() => {
+  if (getApiCacheVersion() !== lastCacheVer) {
+    lastCacheVer = getApiCacheVersion()
+    void loadAll(false)
+  }
+})
 </script>
 
 <template>
