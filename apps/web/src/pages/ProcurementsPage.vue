@@ -677,14 +677,19 @@ onActivated(() => {
                     <XCircle :size="13" /> Cancel
                   </button>
                   <button
-                    v-if="row.status !== 'cancelled'"
+                    class="icon-button"
+                    title="Lihat detail & progress"
+                    @click="openDetail(row.id)"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button
                     class="icon-button"
                     title="Edit pengadaan"
                     @click="openEditModal(row)"
                   >
                     <Edit3 :size="15" />
                   </button>
-                  <button class="icon-button" title="Lihat detail & progress" @click="openDetail(row.id)"><Eye :size="15" /></button>
                   <button class="icon-button danger" title="Hapus pengadaan" @click="deleteProcurement(row)"><Trash2 :size="15" /></button>
                 </div>
               </td>

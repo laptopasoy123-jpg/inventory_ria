@@ -853,7 +853,6 @@ export class LocalInventoryService implements InventoryService {
     const state = await this.load()
     const proc = state.procurements.find((p) => p.id === id)
     if (!proc) throw new Error('Pengadaan tidak ditemukan')
-    if (proc.status === 'cancelled') throw new Error('Pengadaan yang dibatalkan tidak dapat diedit')
 
     const calcTotal = input.items.reduce((s, item) => s + item.orderedQuantity * (item.unitPrice || 0), 0)
     const totalAmount = input.totalAmount && input.totalAmount > 0 ? input.totalAmount : calcTotal
@@ -914,7 +913,9 @@ export class LocalInventoryService implements InventoryService {
 
     const totalOrd = nextItems.reduce((s, i) => s + i.ordered_quantity, 0)
     const totalRec = nextItems.reduce((s, i) => s + i.received_quantity, 0)
-    proc.status = totalRec >= totalOrd && totalOrd > 0 ? 'completed' : totalRec > 0 ? 'partial' : 'ordered'
+    if (proc.status !== 'cancelled') {
+      proc.status = totalRec >= totalOrd && totalOrd > 0 ? 'completed' : totalRec > 0 ? 'partial' : 'ordered'
+    }
 
     await this.save(state)
     return id
@@ -1014,9 +1015,29 @@ export class LocalInventoryService implements InventoryService {
     const idx = state.issuances.findIndex((i) => i.id === id)
     if (idx === -1) throw new Error('Transaksi barang keluar tidak ditemukan')
     const iss = state.issuances[idx]!
-    if (iss.items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)) {
-      throw new Error('Barang keluar yang sudah memiliki catatan pengembalian tidak dapat dihapus. Hapus data pengembalian terkait terlebih dahulu.')
+    const issItemMap = new Map(iss.items.map((it) => [it.id, it]))
+    for (const ret of [...state.returns]) {
+      const removed = ret.items.filter((ri) => issItemMap.has(ri.issuance_item_id))
+      if (!removed.length) continue
+      for (const ri of removed) {
+        const parent = issItemMap.get(ri.issuance_item_id)!
+        if (ri.result !== 'lost') {
+          const targetCond: StockCondition | null =
+            ri.result === 'used_good' ? 'used_good'
+              : ri.result === 'maintenance' ? 'quarantine'
+                : ri.result === 'damaged' && ri.reusable ? 'used_good'
+                  : null
+          if (targetCond) {
+            const bal = state.stock_balances.find((b) => b.variant_id === parent.variant_id && b.condition === targetCond)
+            const cur = Number(bal?.quantity ?? 0)
+            const delta = -Math.min(cur, ri.quantity)
+            if (delta !== 0) this.applyMovement(state, parent.variant_id, targetCond, delta, 'return', 'return', ret.id, `Hapus barang keluar ${iss.transaction_no}`, new Date().toISOString())
+          }
+        }
+      }
+      ret.items = ret.items.filter((ri) => !issItemMap.has(ri.issuance_item_id))
     }
+    state.returns = state.returns.filter((r) => r.items.length > 0)
     for (const line of iss.items) {
       this.applyMovement(state, line.variant_id, line.condition, line.quantity, 'issuance', 'issuance', id, `Hapus barang keluar ${iss.transaction_no}`, new Date().toISOString())
     }
@@ -1476,9 +1497,29 @@ export class LocalInventoryService implements InventoryService {
     const state = await this.load()
     const iss = state.issuances.find((i) => i.id === id)
     if (!iss) throw new Error('Transaksi barang keluar tidak ditemukan')
-    if (iss.items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)) {
-      throw new Error('Barang keluar yang sudah memiliki catatan pengembalian tidak dapat diedit itemnya')
+    const issItemMap = new Map(iss.items.map((it) => [it.id, it]))
+    for (const ret of [...state.returns]) {
+      const removed = ret.items.filter((ri) => issItemMap.has(ri.issuance_item_id))
+      if (!removed.length) continue
+      for (const ri of removed) {
+        const parent = issItemMap.get(ri.issuance_item_id)!
+        if (ri.result !== 'lost') {
+          const targetCond: StockCondition | null =
+            ri.result === 'used_good' ? 'used_good'
+              : ri.result === 'maintenance' ? 'quarantine'
+                : ri.result === 'damaged' && ri.reusable ? 'used_good'
+                  : null
+          if (targetCond) {
+            const bal = state.stock_balances.find((b) => b.variant_id === parent.variant_id && b.condition === targetCond)
+            const cur = Number(bal?.quantity ?? 0)
+            const delta = -Math.min(cur, ri.quantity)
+            if (delta !== 0) this.applyMovement(state, parent.variant_id, targetCond, delta, 'return', 'return', ret.id, `Revisi barang keluar ${iss.transaction_no}`, new Date().toISOString())
+          }
+        }
+      }
+      ret.items = ret.items.filter((ri) => !issItemMap.has(ri.issuance_item_id))
     }
+    state.returns = state.returns.filter((r) => r.items.length > 0)
 
     for (const old of iss.items) {
       this.applyMovement(state, old.variant_id, old.condition, old.quantity, 'issuance', 'issuance', id, 'Revisi barang keluar (koreksi)', new Date().toISOString())

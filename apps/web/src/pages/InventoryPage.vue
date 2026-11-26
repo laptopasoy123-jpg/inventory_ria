@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowRightLeft, ClipboardList, Download, Edit3, Eye,
   History, PackageOpen, Plus, Printer, RotateCcw, Search, Trash2,
@@ -27,6 +27,7 @@ type MovementRow = {
 }
 
 const route = useRoute()
+const router = useRouter()
 const master = useMasterStore()
 const toast = useToast()
 
@@ -182,6 +183,7 @@ const flatSoItems = computed(() =>
       const diff = Number(it.physical_quantity) - Number(it.system_quantity)
       return {
         key: `${st.id}-${it.id}`,
+        stocktakeId: st.id,
         stocktakeNo: st.stocktake_no,
         referenceAt: st.reference_at,
         officerName: st.officer_name,
@@ -589,6 +591,18 @@ async function deleteInventoryItem(row: StockRow) {
   }
 }
 
+async function deleteSoFromInventory(item: (typeof flatSoItems.value)[number]) {
+  if (!window.confirm(`Hapus sesi stok opname "${item.stocktakeNo}"? Penyesuaian stok dari sesi ini akan dibalikkan.`)) return
+  try {
+    await api(`/api/transactions/stocktakes/${item.stocktakeId}`, { method: 'DELETE' })
+    showSoPreviewModal.value = false
+    await Promise.all([load(), loadStocktakes(), master.refresh(true)])
+    toast.success(`Stok opname ${item.stocktakeNo} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus stok opname')
+  }
+}
+
 async function deleteOpeningStock(id: string, txNo: string) {
   if (!window.confirm(`Hapus catatan stok awal "${txNo}"? Stok barang terkait akan dikurangi kembali sesuai jumlah stok awal.`)) return
   try {
@@ -842,7 +856,11 @@ onActivated(() => {
                 </td>
                 <td>{{ item.reason }}</td>
                 <td>
-                  <button class="icon-button" title="Preview detail selisih SO" @click="openSoPreview(item)"><Eye :size="15" /></button>
+                  <div class="row-actions">
+                    <button class="icon-button" title="Preview detail selisih SO" @click="openSoPreview(item)"><Eye :size="15" /></button>
+                    <button class="icon-button" title="Edit di halaman Stok Opname" @click="router.push({ name: 'stocktakes' })"><Edit3 :size="15" /></button>
+                    <button class="icon-button danger" title="Hapus sesi stok opname" @click="deleteSoFromInventory(item)"><Trash2 :size="15" /></button>
+                  </div>
                 </td>
               </tr>
               <tr v-if="!loadingSo && !filteredSoItems.length">

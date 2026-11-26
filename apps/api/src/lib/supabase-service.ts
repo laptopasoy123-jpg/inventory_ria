@@ -209,8 +209,9 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteDepartment(id: string) {
+    await this.db.from('procurements').update({ department_id: null }).eq('department_id', id)
     const { error } = await this.db.from('departments').delete().eq('id', id)
-    if (error) throw error
+    if (error) throw this.toErr(error)
   }
 
   async saveSupplier(id: string | null, input: SupplierInput) {
@@ -247,8 +248,10 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteFunder(id: string) {
+    await this.db.from('procurements').update({ funder_id: null, funding_source: 'company' }).eq('funder_id', id)
+    await this.db.from('purchases').update({ funder_id: null, funding_source: 'company' }).eq('funder_id', id)
     const { error } = await this.db.from('funders').delete().eq('id', id)
-    if (error) throw error
+    if (error) throw this.toErr(error)
   }
 
   async saveOfficer(id: string | null, input: OfficerInput) {
@@ -283,8 +286,25 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteEmployee(id: string) {
+    const { data: empReturns } = await this.db.from('returns').select('id').eq('employee_id', id)
+    const retIds = (empReturns ?? []).map((r: { id: string }) => r.id)
+    if (retIds.length) {
+      await this.db.from('return_items').delete().in('return_id', retIds)
+      await this.db.from('returns').delete().in('id', retIds)
+    }
+    const { data: empIss } = await this.db.from('issuances').select('id').eq('employee_id', id)
+    const issIds = (empIss ?? []).map((i: { id: string }) => i.id)
+    if (issIds.length) {
+      const { data: issItems } = await this.db.from('issuance_items').select('id').in('issuance_id', issIds)
+      const issItemIds = (issItems ?? []).map((x: { id: string }) => x.id)
+      if (issItemIds.length) {
+        await this.db.from('return_items').delete().in('issuance_item_id', issItemIds)
+      }
+      await this.db.from('issuance_items').delete().in('issuance_id', issIds)
+      await this.db.from('issuances').delete().in('id', issIds)
+    }
     const { error } = await this.db.from('employees').delete().eq('id', id)
-    if (error) throw error
+    if (error) throw this.toErr(error)
   }
 
   async saveItem(id: string | null, input: ItemInput) {
@@ -315,9 +335,25 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async deleteItem(id: string) {
-    await this.db.from('item_variants').delete().eq('item_id', id)
+    const { data: variants } = await this.db.from('item_variants').select('id').eq('item_id', id)
+    const varIds = (variants ?? []).map((v: { id: string }) => v.id)
+    if (varIds.length) {
+      const { data: issItems } = await this.db.from('issuance_items').select('id').in('variant_id', varIds)
+      const issItemIds = (issItems ?? []).map((x: { id: string }) => x.id)
+      if (issItemIds.length) {
+        await this.db.from('return_items').delete().in('issuance_item_id', issItemIds)
+      }
+      await this.db.from('issuance_items').delete().in('variant_id', varIds)
+      await this.db.from('purchase_items').delete().in('variant_id', varIds)
+      await this.db.from('procurement_items').delete().in('variant_id', varIds)
+      await this.db.from('opening_stock_items').delete().in('variant_id', varIds)
+      await this.db.from('stocktake_items').delete().in('variant_id', varIds)
+      await this.db.from('stock_movements').delete().in('variant_id', varIds)
+      await this.db.from('stock_balances').delete().in('variant_id', varIds)
+      await this.db.from('item_variants').delete().in('id', varIds)
+    }
     const { error } = await this.db.from('items').delete().eq('id', id)
-    if (error) throw error
+    if (error) throw this.toErr(error)
   }
 
   async listInventory({ page, limit, search, status }: { page: number; limit: number; search?: string; status?: string; categoryId?: string }) {
@@ -388,16 +424,20 @@ export class SupabaseInventoryService implements InventoryService {
 
     const items = (opRow.opening_stock_items ?? []) as Array<{ variant_id: string; condition: string; quantity: number }>
     for (const line of items) {
-      await this.applyStockMovementDirect(
-        line.variant_id,
-        line.condition,
-        -Number(line.quantity),
-        'opening_stock',
-        'opening_stock',
-        id,
-        actorId,
-        `Hapus stok awal ${opRow.transaction_no}`,
-      )
+      const cur = await this.getCurrentBalance(line.variant_id, line.condition)
+      const delta = -Math.min(cur, Number(line.quantity))
+      if (delta !== 0) {
+        await this.applyStockMovementDirect(
+          line.variant_id,
+          line.condition,
+          delta,
+          'opening_stock',
+          'opening_stock',
+          id,
+          actorId,
+          `Hapus stok awal ${opRow.transaction_no}`,
+        )
+      }
     }
     const { error: delItemsErr } = await this.db.from('opening_stock_items').delete().eq('opening_stock_id', id)
     if (delItemsErr) throw this.toErr(delItemsErr)
@@ -483,13 +523,99 @@ export class SupabaseInventoryService implements InventoryService {
   }
 
   async updateProcurement(id: string, input: ProcurementInput): Promise<string> {
-    const { data, error } = await this.db.rpc('update_procurement', {
-      p_id: id,
-      p_payload: input,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
-    return data as string
+    const { data: proc, error: fetchErr } = await this.db
+      .from('procurements')
+      .select('id, status, paid_amount, procurement_items(id, variant_id, ordered_quantity, received_quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!proc) throw new Error('Pengadaan tidak ditemukan')
+
+    const calcTotal = input.items.reduce((s, item) => s + Number(item.orderedQuantity) * Number(item.unitPrice || 0), 0)
+    const payloadTotal = input.totalAmount !== undefined && Number(input.totalAmount) > 0 ? Number(input.totalAmount) : calcTotal
+
+    const existingItems = (proc.procurement_items ?? []) as Array<{
+      id: string; variant_id: string; ordered_quantity: number; received_quantity: number
+    }>
+    const existingMap = new Map(existingItems.map((it) => [it.id, it]))
+    const keptIds: string[] = []
+
+    for (const line of input.items) {
+      if (line.id && existingMap.has(line.id)) {
+        const old = existingMap.get(line.id)!
+        const { error: uErr } = await this.db
+          .from('procurement_items')
+          .update({
+            variant_id: line.variantId,
+            ordered_quantity: Number(line.orderedQuantity),
+            received_quantity: Math.min(Number(old.received_quantity || 0), Number(line.orderedQuantity)),
+            unit_price: Number(line.unitPrice || 0),
+            notes: line.notes || null,
+          })
+          .eq('id', line.id)
+        if (uErr) throw this.toErr(uErr)
+        keptIds.push(line.id)
+      } else {
+        const { data: ins, error: iErr } = await this.db
+          .from('procurement_items')
+          .insert({
+            procurement_id: id,
+            variant_id: line.variantId,
+            ordered_quantity: Number(line.orderedQuantity),
+            unit_price: Number(line.unitPrice || 0),
+            notes: line.notes || null,
+          })
+          .select('id')
+          .single()
+        if (iErr) throw this.toErr(iErr)
+        keptIds.push(String(ins.id))
+      }
+    }
+
+    const removedIds = existingItems.map((it) => it.id).filter((oid) => !keptIds.includes(oid))
+    if (removedIds.length) {
+      await this.db.from('purchase_items').update({ procurement_item_id: null }).in('procurement_item_id', removedIds)
+      await this.db.from('procurement_items').delete().in('id', removedIds)
+    }
+
+    const { data: finalItems } = await this.db
+      .from('procurement_items')
+      .select('ordered_quantity, received_quantity')
+      .eq('procurement_id', id)
+    const list = (finalItems ?? []) as Array<{ ordered_quantity: number; received_quantity: number }>
+    const totalOrd = list.reduce((s, x) => s + Number(x.ordered_quantity || 0), 0)
+    const totalRec = list.reduce((s, x) => s + Number(x.received_quantity || 0), 0)
+    const paidAmount = Number(proc.paid_amount || 0)
+    const nextPayStatus = paidAmount >= payloadTotal && payloadTotal > 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid'
+    const nextStatus = proc.status === 'cancelled'
+      ? 'cancelled'
+      : totalRec >= totalOrd && totalOrd > 0
+        ? 'completed'
+        : totalRec > 0
+          ? 'partial'
+          : 'ordered'
+
+    const { error: updErr } = await this.db
+      .from('procurements')
+      .update({
+        procurement_date: new Date(input.procurementDate).toISOString().slice(0, 10),
+        expected_date: input.expectedDate ? new Date(input.expectedDate).toISOString().slice(0, 10) : null,
+        pr_number: input.prNumber || null,
+        po_number: input.poNumber || null,
+        department_id: input.departmentId || null,
+        supplier_id: input.supplierId,
+        reason: input.reason,
+        funding_source: input.fundingSource,
+        payment_method: input.paymentMethod,
+        funder_id: input.fundingSource === 'advanced' ? (input.funderId || null) : null,
+        total_amount: payloadTotal,
+        payment_status: nextPayStatus,
+        status: nextStatus,
+        notes: input.notes || null,
+      })
+      .eq('id', id)
+    if (updErr) throw this.toErr(updErr)
+    return id
   }
 
   async deleteProcurement(id: string): Promise<void> {
@@ -635,16 +761,20 @@ export class SupabaseInventoryService implements InventoryService {
       id: string; variant_id: string; condition: string; quantity: number; procurement_item_id: string | null
     }>
     for (const line of items) {
-      await this.applyStockMovementDirect(
-        line.variant_id,
-        line.condition,
-        -Number(line.quantity),
-        'receipt',
-        'purchase',
-        id,
-        actorId,
-        `Hapus barang masuk ${purRow.transaction_no}`,
-      )
+      const cur = await this.getCurrentBalance(line.variant_id, line.condition)
+      const delta = -Math.min(cur, Number(line.quantity))
+      if (delta !== 0) {
+        await this.applyStockMovementDirect(
+          line.variant_id,
+          line.condition,
+          delta,
+          'receipt',
+          'purchase',
+          id,
+          actorId,
+          `Hapus barang masuk ${purRow.transaction_no}`,
+        )
+      }
       if (line.procurement_item_id) {
         const { data: pi } = await this.db
           .from('procurement_items')
@@ -712,14 +842,149 @@ export class SupabaseInventoryService implements InventoryService {
     return data as string
   }
 
+  private async detachAndReverseReturnsForIssuanceItems(
+    issItemIds: string[],
+    issItemMap: Map<string, { variant_id: string }>,
+    actorId: string | null,
+    reasonPrefix: string,
+  ): Promise<void> {
+    if (!issItemIds.length) return
+    const { data: linkedRetItems } = await this.db
+      .from('return_items')
+      .select('id, return_id, issuance_item_id, quantity, result, reusable')
+      .in('issuance_item_id', issItemIds)
+
+    const retItems = (linkedRetItems ?? []) as Array<{
+      id: string; return_id: string; issuance_item_id: string; quantity: number; result: string; reusable?: boolean
+    }>
+    if (!retItems.length) return
+
+    const touchedReturnIds = new Set<string>()
+    for (const ri of retItems) {
+      touchedReturnIds.add(ri.return_id)
+      const parentItem = issItemMap.get(ri.issuance_item_id)
+      if (!parentItem || ri.result === 'lost') continue
+      const targetCond =
+        ri.result === 'used_good' ? 'used_good'
+          : ri.result === 'maintenance' ? 'quarantine'
+            : ri.result === 'damaged' && ri.reusable ? 'used_good'
+              : null
+      if (targetCond) {
+        const cur = await this.getCurrentBalance(parentItem.variant_id, targetCond)
+        const delta = -Math.min(cur, Number(ri.quantity))
+        if (delta !== 0) {
+          await this.applyStockMovementDirect(
+            parentItem.variant_id,
+            targetCond,
+            delta,
+            'return',
+            'return',
+            ri.return_id,
+            actorId,
+            reasonPrefix,
+          )
+        }
+      }
+    }
+
+    await this.db.from('return_items').delete().in('id', retItems.map((x) => x.id))
+    for (const retId of touchedReturnIds) {
+      const { count } = await this.db.from('return_items').select('id', { count: 'exact', head: true }).eq('return_id', retId)
+      if ((count ?? 0) === 0) {
+        await this.db.from('returns').delete().eq('id', retId)
+      }
+    }
+  }
+
   async updateIssuance(id: string, input: IssuanceInput): Promise<string> {
-    const { data, error } = await this.db.rpc('update_issuance', {
-      p_id: id,
-      p_payload: input,
-      p_actor: await this.resolveActorId(),
-    })
-    if (error) throw error
-    return data as string
+    const actorId = await this.resolveActorId()
+    const { data: issRow, error: fetchErr } = await this.db
+      .from('issuances')
+      .select('id, transaction_no, handover_proof_key, issuance_items(id, variant_id, condition, quantity, returned_quantity, resolved_lost_quantity)')
+      .eq('id', id)
+      .maybeSingle()
+    if (fetchErr) throw this.toErr(fetchErr)
+    if (!issRow) throw new Error('Transaksi barang keluar tidak ditemukan')
+
+    const oldItems = (issRow.issuance_items ?? []) as Array<{
+      id: string; variant_id: string; condition: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number
+    }>
+    const hasReturns = oldItems.some((it) => Number(it.returned_quantity || 0) > 0 || Number(it.resolved_lost_quantity || 0) > 0)
+
+    if (hasReturns) {
+      const issItemMap = new Map(oldItems.map((it) => [it.id, { variant_id: it.variant_id }]))
+      await this.detachAndReverseReturnsForIssuanceItems(
+        oldItems.map((it) => it.id),
+        issItemMap,
+        actorId,
+        `Revisi barang keluar ${issRow.transaction_no} (penyesuaian pengembalian)`,
+      )
+    }
+
+    for (const old of oldItems) {
+      await this.applyStockMovementDirect(
+        old.variant_id,
+        old.condition,
+        Number(old.quantity),
+        'issuance',
+        'issuance',
+        id,
+        actorId,
+        `Revisi barang keluar ${issRow.transaction_no} (koreksi)`,
+      )
+    }
+
+    const { error: delItemsErr } = await this.db.from('issuance_items').delete().eq('issuance_id', id)
+    if (delItemsErr) throw this.toErr(delItemsErr)
+
+    const issuedDate = new Date(input.issuedAt).toISOString().slice(0, 10)
+    const { error: updErr } = await this.db
+      .from('issuances')
+      .update({
+        issued_at: issuedDate,
+        employee_id: input.employeeId,
+        officer_name: input.officerName,
+        handover_proof_key: input.handoverProofKey || issRow.handover_proof_key || null,
+        notes: input.notes || null,
+      })
+      .eq('id', id)
+    if (updErr) throw this.toErr(updErr)
+
+    const occurredAt = this.normalizeReferenceAt(input.issuedAt)
+    for (const line of input.items) {
+      const reqQty = Number(line.quantity)
+      if (!line.condition || line.condition === 'auto') {
+        const curNew = await this.getCurrentBalance(line.variantId, 'new')
+        const curUsed = await this.getCurrentBalance(line.variantId, 'used_good')
+        if (curNew + curUsed < reqQty) {
+          throw new Error(`Stok tersedia tidak mencukupi (tersedia ${curNew + curUsed})`)
+        }
+        const takeNew = Math.min(curNew, reqQty)
+        const takeUsed = reqQty - takeNew
+        if (takeNew > 0) {
+          const { error: iErr } = await this.db.from('issuance_items').insert({
+            issuance_id: id, variant_id: line.variantId, condition: 'new', quantity: takeNew, purpose: line.purpose, notes: line.notes || null,
+          })
+          if (iErr) throw this.toErr(iErr)
+          await this.applyStockMovementDirect(line.variantId, 'new', -takeNew, 'issuance', 'issuance', id, actorId, line.purpose, occurredAt)
+        }
+        if (takeUsed > 0) {
+          const { error: iErr } = await this.db.from('issuance_items').insert({
+            issuance_id: id, variant_id: line.variantId, condition: 'used_good', quantity: takeUsed, purpose: line.purpose, notes: line.notes || null,
+          })
+          if (iErr) throw this.toErr(iErr)
+          await this.applyStockMovementDirect(line.variantId, 'used_good', -takeUsed, 'issuance', 'issuance', id, actorId, line.purpose, occurredAt)
+        }
+      } else {
+        const { error: iErr } = await this.db.from('issuance_items').insert({
+          issuance_id: id, variant_id: line.variantId, condition: line.condition, quantity: reqQty, purpose: line.purpose, notes: line.notes || null,
+        })
+        if (iErr) throw this.toErr(iErr)
+        await this.applyStockMovementDirect(line.variantId, line.condition, -reqQty, 'issuance', 'issuance', id, actorId, line.purpose, occurredAt)
+      }
+    }
+
+    return id
   }
 
   async deleteIssuance(id: string): Promise<void> {
@@ -735,9 +1000,13 @@ export class SupabaseInventoryService implements InventoryService {
     const items = (issRow.issuance_items ?? []) as Array<{
       id: string; variant_id: string; condition: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number
     }>
-    if (items.some((it) => Number(it.returned_quantity || 0) > 0 || Number(it.resolved_lost_quantity || 0) > 0)) {
-      throw new Error('Barang keluar yang sudah memiliki catatan pengembalian tidak dapat dihapus. Hapus data pengembalian terkait terlebih dahulu.')
-    }
+    const issItemMap = new Map(items.map((it) => [it.id, { variant_id: it.variant_id }]))
+    await this.detachAndReverseReturnsForIssuanceItems(
+      items.map((it) => it.id),
+      issItemMap,
+      actorId,
+      `Hapus barang keluar ${issRow.transaction_no} (pembalikan pengembalian)`,
+    )
 
     for (const line of items) {
       await this.applyStockMovementDirect(

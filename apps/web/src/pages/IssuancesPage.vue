@@ -302,11 +302,15 @@ async function submit() {
 }
 
 async function deleteIssuance(row: IssuanceRow) {
-  if (!window.confirm(`Hapus transaksi barang keluar "${row.transaction_no}"? Stok barang akan otomatis dikembalikan ke gudang.`)) return
+  const hasRet = row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)
+  const msg = hasRet
+    ? `Hapus transaksi barang keluar "${row.transaction_no}"? Catatan pengembalian terkait dan stok gudang akan ikut disesuaikan secara otomatis.`
+    : `Hapus transaksi barang keluar "${row.transaction_no}"? Stok barang akan otomatis dikembalikan ke gudang.`
+  if (!window.confirm(msg)) return
   try {
     await api(`/api/transactions/issuances/${row.id}`, { method: 'DELETE' })
     await Promise.all([load(), master.refresh(true)])
-    toast.success(`Barang keluar ${row.transaction_no} berhasil dihapus & stok dikembalikan`)
+    toast.success(`Barang keluar ${row.transaction_no} berhasil dihapus & stok disesuaikan`)
   } catch (e) {
     toast.error(e instanceof Error ? e.message : 'Gagal menghapus barang keluar')
   }
@@ -408,22 +412,8 @@ onActivated(() => {
               <td>
                 <div class="row-actions">
                   <button class="icon-button" title="Preview detail barang keluar" @click="openPreview(row)"><Eye :size="15" /></button>
-                  <button
-                    class="icon-button"
-                    :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
-                    :title="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0) ? 'Sudah ada pengembalian' : 'Edit barang keluar'"
-                    @click="openEditModal(row)"
-                  >
-                    <Edit3 :size="15" />
-                  </button>
-                  <button
-                    class="icon-button danger"
-                    :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
-                    :title="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0) ? 'Hapus data pengembalian terkait terlebih dahulu' : 'Hapus barang keluar'"
-                    @click="deleteIssuance(row)"
-                  >
-                    <Trash2 :size="15" />
-                  </button>
+                  <button class="icon-button" title="Edit barang keluar" @click="openEditModal(row)"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus barang keluar" @click="deleteIssuance(row)"><Trash2 :size="15" /></button>
                 </div>
               </td>
             </tr>
@@ -480,12 +470,10 @@ onActivated(() => {
       </div>
       <template #footer>
         <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
-        <button
-          v-if="previewRow && !previewRow.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
-          type="button"
-          class="primary-button"
-          @click="showPreviewModal = false; openEditModal(previewRow)"
-        >
+        <button v-if="previewRow" type="button" class="secondary-button danger-soft" @click="showPreviewModal = false; deleteIssuance(previewRow)">
+          <Trash2 :size="15" /> Hapus
+        </button>
+        <button v-if="previewRow" type="button" class="primary-button" @click="showPreviewModal = false; openEditModal(previewRow)">
           <Edit3 :size="15" /> Edit Barang Keluar
         </button>
       </template>

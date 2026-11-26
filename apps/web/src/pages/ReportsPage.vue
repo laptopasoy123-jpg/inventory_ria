@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
-import { AlertTriangle, CalendarRange, CheckSquare, Download, Eye, FileDown, Printer, RefreshCw, RotateCcw, Search } from '@lucide/vue'
+import { useRouter } from 'vue-router'
+import { AlertTriangle, CalendarRange, CheckSquare, Download, Edit3, Eye, FileDown, Printer, RefreshCw, RotateCcw, Search, Trash2 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
@@ -11,6 +12,7 @@ import { useMasterStore } from '@/stores/master'
 type ReportSectionKey = 'stock' | 'movements' | 'procurements' | 'opname' | 'liabilities' | 'payments'
 type ReportTab = 'all' | ReportSectionKey
 
+const router = useRouter()
 const master = useMasterStore()
 const toast = useToast()
 
@@ -70,13 +72,31 @@ function toggleSelectAllSections() {
 }
 
 const movements = ref<Array<{ id: number; variant_id?: string; occurred_at: string; movement_type: string; condition: string; quantity_delta: number; balance_after: number; notes: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }>>([])
-const procurements = ref<Array<{ procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; department_name?: string | null; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
-const stocktakes = ref<Array<{ stocktake_no: string; reference_at: string; officer_name: string; status: string; stocktake_items: Array<{ variant_id?: string; condition: string; system_quantity: number; physical_quantity: number; reason: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }> }>>([])
+const procurements = ref<Array<{ id: string; procurement_no: string; procurement_date: string; po_number: string | null; supplier_name: string; department_name?: string | null; total_ordered: number; total_received: number; progress_percent: number; total_amount: number; paid_amount: number; payment_status: string; status: string }>>([])
+const stocktakes = ref<Array<{ id: string; stocktake_no: string; reference_at: string; officer_name: string; status: string; stocktake_items: Array<{ variant_id?: string; condition: string; system_quantity: number; physical_quantity: number; reason: string | null; item_variants?: { size: string; items?: { code: string; name: string; unit: string } | null } | null }> }>>([])
 const liabilities = ref<Array<{
-  id?: string; variant_id?: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string;
-  issuances?: { transaction_no: string; issued_at: string; employee_id?: string; employees?: { id?: string; nik: string; name: string; departments?: { name: string } | null } | null } | null;
+  id?: string; issuance_id?: string; variant_id?: string; quantity: number; returned_quantity: number; resolved_lost_quantity: number; purpose: string;
+  issuances?: { id?: string; transaction_no: string; issued_at: string; employee_id?: string; employees?: { id?: string; nik: string; name: string; departments?: { name: string } | null } | null } | null;
   item_variants?: { id?: string; size: string; items?: { code?: string; name: string; unit: string; return_required?: boolean } | null } | null
 }>>([])
+
+async function deleteFromReport(kind: 'item' | 'procurement' | 'stocktake' | 'issuance', id: string | undefined, label: string) {
+  if (!id) return
+  if (!window.confirm(`Hapus "${label}" secara permanen?`)) return
+  const map = {
+    item: `/api/master/items/${id}`,
+    procurement: `/api/procurements/${id}`,
+    stocktake: `/api/transactions/stocktakes/${id}`,
+    issuance: `/api/transactions/issuances/${id}`,
+  }
+  try {
+    await api(map[kind], { method: 'DELETE' })
+    toast.success(`"${label}" berhasil dihapus`)
+    await loadAll(true)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus data')
+  }
+}
 
 const supplierFilterOptions = computed(() => {
   const names = new Set<string>()
@@ -683,22 +703,26 @@ onActivated(() => { void loadAll(true) })
               <td>{{ formatNumber(v.stock_damaged) }} {{ v.unit }}</td>
               <td><strong>{{ formatNumber(v.total_available) }} {{ v.unit }}</strong></td>
               <td class="screen-only-cell">
-                <button
-                  class="icon-button"
-                  title="Preview stok barang"
-                  @click="openRowPreview('Preview Stok Saat Ini', variantLabel(v), [
-                    { label: 'Kode', value: v.code },
-                    { label: 'Nama Barang', value: variantLabel(v) },
-                    { label: 'Satuan', value: v.unit },
-                    { label: 'Baru', value: `${formatNumber(v.stock_new)} ${v.unit}` },
-                    { label: 'Bekas Layak', value: `${formatNumber(v.stock_used_good)} ${v.unit}` },
-                    { label: 'Karantina', value: `${formatNumber(v.stock_quarantine)} ${v.unit}` },
-                    { label: 'Rusak', value: `${formatNumber(v.stock_damaged)} ${v.unit}` },
-                    { label: 'Stok Tersedia Saat Ini', value: `${formatNumber(v.total_available)} ${v.unit}` },
-                  ])"
-                >
-                  <Eye :size="15" />
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="icon-button"
+                    title="Preview stok barang"
+                    @click="openRowPreview('Preview Stok Saat Ini', variantLabel(v), [
+                      { label: 'Kode', value: v.code },
+                      { label: 'Nama Barang', value: variantLabel(v) },
+                      { label: 'Satuan', value: v.unit },
+                      { label: 'Baru', value: `${formatNumber(v.stock_new)} ${v.unit}` },
+                      { label: 'Bekas Layak', value: `${formatNumber(v.stock_used_good)} ${v.unit}` },
+                      { label: 'Karantina', value: `${formatNumber(v.stock_quarantine)} ${v.unit}` },
+                      { label: 'Rusak', value: `${formatNumber(v.stock_damaged)} ${v.unit}` },
+                      { label: 'Stok Tersedia Saat Ini', value: `${formatNumber(v.total_available)} ${v.unit}` },
+                    ])"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button class="icon-button" title="Kelola di Stok Inventaris" @click="router.push({ name: 'inventory' })"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus barang" @click="deleteFromReport('item', v.item_id, v.name)"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filteredVariants.length"><td colspan="8"><div class="empty-state compact">Tidak ada barang yang cocok.</div></td></tr>
@@ -751,21 +775,25 @@ onActivated(() => { void loadAll(true) })
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td><span class="status-pill" :class="p.status === 'completed' ? 'safe' : p.status === 'cancelled' ? 'out' : 'amber'">{{ p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' }}</span></td>
               <td class="screen-only-cell">
-                <button
-                  class="icon-button"
-                  title="Preview pengadaan"
-                  @click="openRowPreview('Preview Pengadaan', p.procurement_no, [
-                    { label: 'No. Pengadaan', value: p.procurement_no },
-                    { label: 'No. PO', value: p.po_number || '-' },
-                    { label: 'Tanggal', value: formatDate(p.procurement_date) },
-                    { label: 'Supplier', value: p.supplier_name },
-                    { label: 'Progress', value: `${formatNumber(p.total_received)} / ${formatNumber(p.total_ordered)} (${p.progress_percent}%)` },
-                    { label: 'Nilai Pengadaan', value: formatCurrency(p.total_amount) },
-                    { label: 'Status', value: p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' },
-                  ])"
-                >
-                  <Eye :size="15" />
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="icon-button"
+                    title="Preview pengadaan"
+                    @click="openRowPreview('Preview Pengadaan', p.procurement_no, [
+                      { label: 'No. Pengadaan', value: p.procurement_no },
+                      { label: 'No. PO', value: p.po_number || '-' },
+                      { label: 'Tanggal', value: formatDate(p.procurement_date) },
+                      { label: 'Supplier', value: p.supplier_name },
+                      { label: 'Progress', value: `${formatNumber(p.total_received)} / ${formatNumber(p.total_ordered)} (${p.progress_percent}%)` },
+                      { label: 'Nilai Pengadaan', value: formatCurrency(p.total_amount) },
+                      { label: 'Status', value: p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' },
+                    ])"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button class="icon-button" title="Kelola di Pengadaan Barang" @click="router.push({ name: 'procurements' })"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus pengadaan" @click="deleteFromReport('procurement', p.id, p.procurement_no)"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filteredProcurements.length"><td colspan="6"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal/filter ini.</div></td></tr>
@@ -791,23 +819,27 @@ onActivated(() => { void loadAll(true) })
                 </td>
                 <td>{{ it.reason || '-' }}</td>
                 <td class="screen-only-cell">
-                  <button
-                    class="icon-button"
-                    title="Preview baris opname"
-                    @click="openRowPreview('Preview Stok Opname', `${st.stocktake_no} · ${variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size })}`, [
-                      { label: 'No. SO', value: st.stocktake_no },
-                      { label: 'Tanggal SO', value: formatDate(st.reference_at) },
-                      { label: 'Petugas', value: st.officer_name },
-                      { label: 'Barang', value: variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size }) },
-                      { label: 'Kondisi', value: conditionLabel(it.condition) },
-                      { label: 'Stok Sistem', value: formatNumber(it.system_quantity) },
-                      { label: 'Stok Fisik', value: formatNumber(it.physical_quantity) },
-                      { label: 'Selisih (+/-)', value: `${it.physical_quantity - it.system_quantity > 0 ? '+' : ''}${formatNumber(it.physical_quantity - it.system_quantity)}` },
-                      { label: 'Alasan', value: it.reason || '-' },
-                    ])"
-                  >
-                    <Eye :size="15" />
-                  </button>
+                  <div class="row-actions">
+                    <button
+                      class="icon-button"
+                      title="Preview baris opname"
+                      @click="openRowPreview('Preview Stok Opname', `${st.stocktake_no} · ${variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size })}`, [
+                        { label: 'No. SO', value: st.stocktake_no },
+                        { label: 'Tanggal SO', value: formatDate(st.reference_at) },
+                        { label: 'Petugas', value: st.officer_name },
+                        { label: 'Barang', value: variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size }) },
+                        { label: 'Kondisi', value: conditionLabel(it.condition) },
+                        { label: 'Stok Sistem', value: formatNumber(it.system_quantity) },
+                        { label: 'Stok Fisik', value: formatNumber(it.physical_quantity) },
+                        { label: 'Selisih (+/-)', value: `${it.physical_quantity - it.system_quantity > 0 ? '+' : ''}${formatNumber(it.physical_quantity - it.system_quantity)}` },
+                        { label: 'Alasan', value: it.reason || '-' },
+                      ])"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                    <button class="icon-button" title="Kelola di Stok Opname" @click="router.push({ name: 'stocktakes' })"><Edit3 :size="15" /></button>
+                    <button class="icon-button danger" title="Hapus sesi SO" @click="deleteFromReport('stocktake', st.id, st.stocktake_no)"><Trash2 :size="15" /></button>
+                  </div>
                 </td>
               </tr>
             </template>
@@ -828,21 +860,25 @@ onActivated(() => { void loadAll(true) })
               <td><strong class="text-amber">{{ formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity)) }} {{ l.item_variants?.items?.unit }}</strong></td>
               <td>{{ l.purpose }}</td>
               <td class="screen-only-cell">
-                <button
-                  class="icon-button"
-                  title="Preview tanggungan karyawan"
-                  @click="openRowPreview('Preview Tanggungan Karyawan', l.issuances?.employees?.name || '-', [
-                    { label: 'No. Pengeluaran', value: l.issuances?.transaction_no || '-' },
-                    { label: 'Tanggal Keluar', value: formatDate(l.issuances?.issued_at) },
-                    { label: 'Karyawan', value: `${l.issuances?.employees?.name || '-'} (${l.issuances?.employees?.nik || '-'})` },
-                    { label: 'Departemen', value: l.issuances?.employees?.departments?.name || '-' },
-                    { label: 'Barang APD', value: variantLabel({ name: l.item_variants?.items?.name || '-', size: l.item_variants?.size }) },
-                    { label: 'Sisa Tanggungan', value: `${formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity))} ${l.item_variants?.items?.unit || ''}` },
-                    { label: 'Keperluan', value: l.purpose || '-' },
-                  ])"
-                >
-                  <Eye :size="15" />
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="icon-button"
+                    title="Preview tanggungan karyawan"
+                    @click="openRowPreview('Preview Tanggungan Karyawan', l.issuances?.employees?.name || '-', [
+                      { label: 'No. Pengeluaran', value: l.issuances?.transaction_no || '-' },
+                      { label: 'Tanggal Keluar', value: formatDate(l.issuances?.issued_at) },
+                      { label: 'Karyawan', value: `${l.issuances?.employees?.name || '-'} (${l.issuances?.employees?.nik || '-'})` },
+                      { label: 'Departemen', value: l.issuances?.employees?.departments?.name || '-' },
+                      { label: 'Barang APD', value: variantLabel({ name: l.item_variants?.items?.name || '-', size: l.item_variants?.size }) },
+                      { label: 'Sisa Tanggungan', value: `${formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity))} ${l.item_variants?.items?.unit || ''}` },
+                      { label: 'Keperluan', value: l.purpose || '-' },
+                    ])"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button class="icon-button" title="Kelola di Barang Keluar" @click="router.push({ name: 'issuances' })"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus pengeluaran terkait" @click="deleteFromReport('issuance', l.issuance_id || l.issuances?.id, l.issuances?.transaction_no || 'Barang Keluar')"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filteredLiabilities.length"><td colspan="7"><div class="empty-state compact">Tidak ada tanggungan aktif yang cocok dengan filter/rentang tanggal ini.</div></td></tr>
@@ -862,20 +898,24 @@ onActivated(() => { void loadAll(true) })
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td>{{ p.progress_percent }}%</td>
               <td class="screen-only-cell">
-                <button
-                  class="icon-button"
-                  title="Preview pembayaran"
-                  @click="openRowPreview('Preview History Pembayaran', p.procurement_no, [
-                    { label: 'Tanggal', value: formatDate(p.procurement_date) },
-                    { label: 'No. Pengadaan', value: p.procurement_no },
-                    { label: 'No. PO', value: p.po_number || '-' },
-                    { label: 'Supplier', value: p.supplier_name },
-                    { label: 'Nominal', value: formatCurrency(p.total_amount) },
-                    { label: 'Progress Kedatangan', value: `${p.progress_percent}%` },
-                  ])"
-                >
-                  <Eye :size="15" />
-                </button>
+                <div class="row-actions">
+                  <button
+                    class="icon-button"
+                    title="Preview pembayaran"
+                    @click="openRowPreview('Preview History Pembayaran', p.procurement_no, [
+                      { label: 'Tanggal', value: formatDate(p.procurement_date) },
+                      { label: 'No. Pengadaan', value: p.procurement_no },
+                      { label: 'No. PO', value: p.po_number || '-' },
+                      { label: 'Supplier', value: p.supplier_name },
+                      { label: 'Nominal', value: formatCurrency(p.total_amount) },
+                      { label: 'Progress Kedatangan', value: `${p.progress_percent}%` },
+                    ])"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button class="icon-button" title="Kelola di History Pembayaran" @click="router.push({ name: 'payments' })"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus pembayaran / pengadaan" @click="deleteFromReport('procurement', p.id, p.procurement_no)"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!filteredPayments.length"><td colspan="7"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal/filter ini.</div></td></tr>

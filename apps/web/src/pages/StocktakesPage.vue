@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { AlertTriangle, CalendarRange, CheckCircle2, ClipboardCheck, Download, Edit3, Eye, FileDown, Plus, RotateCcw, Search, Trash2 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -21,12 +22,13 @@ interface StocktakeRow {
   stocktake_items: StocktakeItemRow[]
 }
 
+const router = useRouter()
 const master = useMasterStore()
 const toast = useToast()
 
 const rows = ref<StocktakeRow[]>([])
 const lostLogs = ref<Array<{
-  id: string; transaction_no: string; returned_at: string; employee_name: string;
+  id: string; returnId: string; transaction_no: string; returned_at: string; employee_name: string;
   item_name: string; unit: string; qty: number; reason: string
 }>>([])
 const loading = ref(true)
@@ -390,6 +392,7 @@ async function load() {
         if (it.result !== 'lost') continue
         flatLost.push({
           id: `${r.id}-${it.id}`,
+          returnId: r.id,
           transaction_no: r.transaction_no,
           returned_at: r.returned_at,
           employee_name: r.employees?.name || '-',
@@ -578,6 +581,18 @@ async function deleteStocktake(st: StocktakeRow) {
   }
 }
 
+async function deleteLostReturn(log: (typeof lostLogs.value)[number]) {
+  if (!window.confirm(`Hapus transaksi pengembalian "${log.transaction_no}" (termasuk catatan kehilangan ini)?`)) return
+  try {
+    await api(`/api/transactions/returns/${log.returnId}`, { method: 'DELETE' })
+    showLostPreviewModal.value = false
+    await Promise.all([load(), master.refresh(true)])
+    toast.success(`Catatan pengembalian ${log.transaction_no} berhasil dihapus`)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal menghapus catatan')
+  }
+}
+
 function openDetail(st: StocktakeRow) {
   activeStocktake.value = st
   detailConditionTab.value = 'all'
@@ -738,7 +753,11 @@ onActivated(() => {
               <td><span class="delta-pill minus">-{{ formatNumber(log.qty) }} {{ log.unit }}</span></td>
               <td>{{ log.reason }}</td>
               <td>
-                <button class="icon-button" title="Preview detail kehilangan" @click="openLostPreview(log)"><Eye :size="15" /></button>
+                <div class="row-actions">
+                  <button class="icon-button" title="Preview detail kehilangan" @click="openLostPreview(log)"><Eye :size="15" /></button>
+                  <button class="icon-button" title="Edit di Pengembalian APD" @click="router.push({ name: 'returns' })"><Edit3 :size="15" /></button>
+                  <button class="icon-button danger" title="Hapus catatan pengembalian" @click="deleteLostReturn(log)"><Trash2 :size="15" /></button>
+                </div>
               </td>
             </tr>
             <tr v-if="!loading && !filteredLostLogs.length">
