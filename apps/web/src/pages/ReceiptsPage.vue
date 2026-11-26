@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowUpDown, CalendarRange, Edit3, Plus, RotateCcw, Search, Trash2, Truck } from '@lucide/vue'
+import { ArrowUpDown, CalendarRange, Edit3, Eye, Plus, RotateCcw, Search, Trash2, Truck } from '@lucide/vue'
+import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
 import ReceiptModal, { type EditablePurchase } from '@/components/ReceiptModal.vue'
-import { api, conditionLabel, formatDate, formatNumber, getApiCacheVersion } from '@/lib/api'
+import { api, attachmentUrl, conditionLabel, formatDate, formatNumber, getApiCacheVersion, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
@@ -33,6 +34,13 @@ const dateTo = ref('')
 const page = ref(1)
 const showModal = ref(false)
 const editingRow = ref<EditablePurchase | null>(null)
+const showPreviewModal = ref(false)
+const previewRow = ref<PurchaseRow | null>(null)
+
+function openPreview(row: PurchaseRow) {
+  previewRow.value = row
+  showPreviewModal.value = true
+}
 
 const sortDir = ref<'desc' | 'asc'>('desc')
 
@@ -252,6 +260,7 @@ onActivated(() => {
               <td>{{ row.purchase_items[0]?.receiver_name || '-' }}</td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview detail barang masuk" @click="openPreview(row)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit barang masuk" @click="openEdit(row)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus barang masuk" @click="deletePurchase(row)"><Trash2 :size="15" /></button>
                 </div>
@@ -266,6 +275,58 @@ onActivated(() => {
       </div>
       <PaginationBar v-model:page="page" :total-items="filtered.length" />
     </section>
+
+    <BaseModal
+      :open="showPreviewModal"
+      :title="`Detail Barang Masuk · ${previewRow?.transaction_no || ''}`"
+      eyebrow="Preview Penerimaan Gudang"
+      :subtitle="previewRow ? `Tanggal Masuk: ${formatDate(previewRow.received_date)}` : ''"
+      size="lg"
+      @close="showPreviewModal = false"
+    >
+      <div v-if="previewRow" class="detail-stack">
+        <div class="summary-banner">
+          <div>
+            <small>Referensi Pengadaan</small>
+            <strong>{{ previewRow.procurements ? `${previewRow.procurements.procurement_no}${previewRow.procurements.po_number ? ` · PO: ${previewRow.procurements.po_number}` : ''}` : 'Pembelian Langsung (Non-PO)' }}</strong>
+          </div>
+          <div>
+            <small>Supplier / Toko</small>
+            <strong>{{ previewRow.suppliers?.name || '-' }}</strong>
+          </div>
+          <div>
+            <small>Sumber Dana &amp; Metode</small>
+            <strong>{{ previewRow.funding_source === 'advanced' ? 'Talangan' : 'Kas Perusahaan' }} · {{ previewRow.payment_method === 'cash' ? 'Tunai' : 'Transfer' }}</strong>
+          </div>
+        </div>
+        <p class="muted-text" style="font-size:12.5px;"><strong>Keterangan:</strong> {{ previewRow.reason || '-' }}</p>
+        <div v-if="previewRow.billing_proof_key">
+          <a :href="attachmentUrl(previewRow.billing_proof_key)" target="_blank" rel="noopener noreferrer" class="secondary-button xs highlight">
+            Lihat Dokumen / Bukti Lampiran ↗
+          </a>
+        </div>
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <thead><tr><th>Barang &amp; Ukuran</th><th>Kondisi</th><th>Jumlah Masuk</th><th>Penerima</th><th>Catatan</th></tr></thead>
+            <tbody>
+              <tr v-for="it in previewRow.purchase_items" :key="it.id">
+                <td><strong>{{ variantLabel({ name: it.item_variants?.items?.name || 'Barang', size: it.item_variants?.size }) }}</strong></td>
+                <td><span class="tag-pill">{{ conditionLabel(it.condition) }}</span></td>
+                <td><span class="delta-pill plus">+{{ formatNumber(it.quantity) }} {{ it.item_variants?.items?.unit }}</span></td>
+                <td>{{ it.receiver_name || '-' }}</td>
+                <td>{{ it.notes || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button v-if="previewRow" type="button" class="primary-button" @click="showPreviewModal = false; openEdit(previewRow)">
+          <Edit3 :size="15" /> Edit Barang Masuk
+        </button>
+      </template>
+    </BaseModal>
 
     <ReceiptModal :open="showModal" :editing-purchase="editingRow" @close="showModal = false" @saved="load" />
   </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Building2, Edit3, ImagePlus, Package, Plus, RotateCcw, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
+import { Building2, Edit3, Eye, ImagePlus, Package, Plus, RotateCcw, Save, Search, ShieldCheck, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ItemFormModal from '@/components/ItemFormModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
@@ -115,6 +115,74 @@ const editingItem = ref<ItemMaster | null>(null)
 
 const showGenericModal = ref(false)
 const editingId = ref<string | null>(null)
+
+const showPreviewModal = ref(false)
+const previewTitle = ref('')
+const previewEyebrow = ref('')
+const previewPhoto = ref<string | null>(null)
+const previewFields = ref<Array<{ label: string; value: string }>>([])
+const previewEditTarget = ref<Record<string, unknown> | null>(null)
+
+function openPreview(tab: MasterTab, row: Record<string, unknown>) {
+  previewEditTarget.value = row
+  previewPhoto.value = null
+  if (tab === 'items') {
+    previewEyebrow.value = 'Preview Master APD'
+    previewTitle.value = String(row.name || '-')
+    previewPhoto.value = row.photo_key ? attachmentUrl(String(row.photo_key)) : itemFlaticonIcon(String(row.name || ''))
+    const variants = Array.isArray(row.item_variants)
+      ? (row.item_variants as Array<{ size?: string }>).map((v) => v.size && v.size !== '-' ? v.size : 'Standar').join(', ')
+      : '-'
+    previewFields.value = [
+      { label: 'Kode Barang', value: String(row.code || '-') },
+      { label: 'Nama APD', value: String(row.name || '-') },
+      { label: 'Satuan', value: String(row.unit || '-') },
+      { label: 'Varian Ukuran', value: variants || 'Standar' },
+      { label: 'Stok Minimum', value: `${row.minimum_stock ?? 0} ${row.unit || ''}` },
+      { label: 'Kebijakan Pengembalian', value: row.return_required ? 'Wajib Kembali' : 'Habis Pakai' },
+      { label: 'Spesifikasi', value: String(row.specification || '-') },
+      { label: 'Status', value: row.active !== false ? 'Aktif' : 'Nonaktif' },
+    ]
+  } else if (tab === 'departments') {
+    previewEyebrow.value = 'Preview Departemen'
+    previewTitle.value = String(row.name || '-')
+    previewFields.value = [
+      { label: 'Kode Departemen', value: String(row.code || '-') },
+      { label: 'Nama Departemen', value: String(row.name || '-') },
+      { label: 'Status', value: row.active !== false ? 'Aktif' : 'Nonaktif' },
+    ]
+  } else if (tab === 'officers') {
+    previewEyebrow.value = 'Preview Petugas Sistem'
+    previewTitle.value = String(row.name || '-')
+    previewFields.value = [
+      { label: 'Nama Lengkap', value: String(row.name || '-') },
+      { label: 'Peran / Tugas', value: String(row.role_label || '-') },
+      { label: 'Status', value: row.active !== false ? 'Aktif' : 'Nonaktif' },
+    ]
+  } else if (tab === 'suppliers' || tab === 'online_shops') {
+    previewEyebrow.value = tab === 'online_shops' ? 'Preview Toko Online' : 'Preview Supplier Resmi'
+    previewTitle.value = String(row.name || '-')
+    previewFields.value = [
+      { label: 'Kode Vendor', value: String(row.code || '-') },
+      { label: 'Nama Vendor', value: String(row.name || '-') },
+      { label: 'Jenis', value: tab === 'online_shops' ? 'Toko Online' : 'Supplier Resmi' },
+      { label: tab === 'online_shops' ? 'PIC / Akun' : 'Nama Kontak', value: String(row.contact_name || '-') },
+      { label: 'Telepon / CS', value: String(row.phone || '-') },
+      { label: tab === 'online_shops' ? 'Link / Platform' : 'Alamat', value: String(row.address || '-') },
+      { label: 'Status', value: row.active !== false ? 'Aktif' : 'Nonaktif' },
+    ]
+  } else {
+    previewEyebrow.value = 'Preview Pihak Penalang'
+    previewTitle.value = String(row.name || '-')
+    previewFields.value = [
+      { label: 'Nama Penalang', value: String(row.name || '-') },
+      { label: 'Telepon', value: String(row.phone || '-') },
+      { label: 'Catatan', value: String(row.notes || '-') },
+      { label: 'Status', value: row.active !== false ? 'Aktif' : 'Nonaktif' },
+    ]
+  }
+  showPreviewModal.value = true
+}
 
 const genericForm = reactive({
   code: '',
@@ -473,6 +541,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview detail barang" @click="openPreview('items', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit barang" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus barang" @click="deleteRow('items', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -494,6 +563,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview departemen" @click="openPreview('departments', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit departemen" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus departemen" @click="deleteRow('departments', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -515,6 +585,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview petugas" @click="openPreview('officers', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit petugas" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus petugas" @click="deleteRow('officers', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -538,6 +609,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview supplier" @click="openPreview('suppliers', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit supplier" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus supplier" @click="deleteRow('suppliers', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -561,6 +633,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview toko online" @click="openPreview('online_shops', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit toko online" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus toko online" @click="deleteRow('online_shops', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -583,6 +656,7 @@ onMounted(() => {
               <td><span class="status-pill" :class="row.active ? 'safe' : 'out'">{{ row.active ? 'Aktif' : 'Nonaktif' }}</span></td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview penalang" @click="openPreview('funders', row as unknown as Record<string, unknown>)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit penalang" @click="openEdit(row as unknown as Record<string, unknown>)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus penalang" @click="deleteRow('funders', row.id, row.name)"><Trash2 :size="15" /></button>
                 </div>
@@ -594,6 +668,34 @@ onMounted(() => {
       </div>
       <PaginationBar v-model:page="page" :total-items="activeTotalCount" />
     </section>
+
+    <BaseModal :open="showPreviewModal" :title="previewTitle" :eyebrow="previewEyebrow" size="sm" @close="showPreviewModal = false">
+      <div class="detail-stack">
+        <div v-if="previewPhoto" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;background:#f7fbfb;border:1px solid #dcebe9;">
+          <img :src="previewPhoto" alt="Preview" style="width:52px;height:52px;object-fit:cover;border-radius:10px;background:#fff;border:1px solid #e1e8ef;" />
+          <div>
+            <strong style="font-size:14px;display:block;">{{ previewTitle }}</strong>
+            <small class="table-sub">{{ previewEyebrow }}</small>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <tbody>
+              <tr v-for="f in previewFields" :key="f.label">
+                <th style="width:40%;">{{ f.label }}</th>
+                <td><strong>{{ f.value }}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button v-if="previewEditTarget" type="button" class="primary-button" @click="showPreviewModal = false; openEdit(previewEditTarget)">
+          <Edit3 :size="15" /> Edit Data
+        </button>
+      </template>
+    </BaseModal>
 
     <ItemFormModal :open="showItemModal" :item="editingItem" @close="showItemModal = false" />
 

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ArrowUpDown, CalendarRange, CheckCircle2, Edit3, PackageCheck, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, CalendarRange, CheckCircle2, Edit3, Eye, PackageCheck, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
-import { api, formatDate, formatNumber, generateUuid, getApiCacheVersion, uploadAttachment, variantLabel } from '@/lib/api'
+import { api, attachmentUrl, formatDate, formatNumber, generateUuid, getApiCacheVersion, uploadAttachment, variantLabel } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import { useMasterStore } from '@/stores/master'
 
@@ -40,9 +40,16 @@ const page = ref(1)
 
 const showModal = ref(false)
 const editingId = ref<string | null>(null)
+const showPreviewModal = ref(false)
+const previewRow = ref<ReturnRow | null>(null)
 const loadingOpen = ref(false)
 const saving = ref(false)
 const uploading = ref(false)
+
+function openPreview(row: ReturnRow) {
+  previewRow.value = row
+  showPreviewModal.value = true
+}
 
 interface ReturnDraftLine {
   selected: boolean
@@ -458,6 +465,7 @@ onActivated(() => {
               <td>{{ row.inspector_name }}</td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview detail pengembalian" @click="openPreview(row)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit pengembalian" @click="openEditModal(row)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus pengembalian" @click="deleteReturn(row)"><Trash2 :size="15" /></button>
                 </div>
@@ -472,6 +480,48 @@ onActivated(() => {
       </div>
       <PaginationBar v-model:page="page" :total-items="filtered.length" />
     </section>
+
+    <BaseModal
+      :open="showPreviewModal"
+      :title="`Detail Pengembalian · ${previewRow?.transaction_no || ''}`"
+      eyebrow="Preview Pengembalian APD"
+      :subtitle="previewRow ? `Tanggal Kembali: ${formatDate(previewRow.returned_at)}` : ''"
+      size="lg"
+      @close="showPreviewModal = false"
+    >
+      <div v-if="previewRow" class="detail-stack">
+        <div class="summary-banner">
+          <div><small>Karyawan</small><strong>{{ previewRow.employees?.name || '-' }} ({{ previewRow.employees?.nik || '-' }})</strong></div>
+          <div><small>Departemen</small><strong>{{ previewRow.employees?.departments?.name || '-' }}</strong></div>
+          <div><small>Petugas Pemeriksa</small><strong>{{ previewRow.inspector_name }}</strong></div>
+        </div>
+        <div v-if="previewRow.proof_key">
+          <a :href="attachmentUrl(previewRow.proof_key)" target="_blank" rel="noopener noreferrer" class="secondary-button xs highlight">
+            Lihat Bukti Pengembalian ↗
+          </a>
+        </div>
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <thead><tr><th>Barang &amp; Ukuran</th><th>Jumlah</th><th>Hasil</th><th>Dampak Stok</th><th>Catatan / Alasan</th></tr></thead>
+            <tbody>
+              <tr v-for="it in previewRow.return_items" :key="it.id">
+                <td><strong>{{ variantLabel({ name: it.issuance_items?.item_variants?.items?.name || 'Barang', size: it.issuance_items?.item_variants?.size }) }}</strong></td>
+                <td><strong>{{ formatNumber(it.quantity) }} {{ it.issuance_items?.item_variants?.items?.unit }}</strong></td>
+                <td><span class="status-pill" :class="resultBadge(it.result).cls">{{ resultBadge(it.result).label }}</span></td>
+                <td><small>{{ resultBadge(it.result).effect }}</small></td>
+                <td>{{ it.reason || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button v-if="previewRow" type="button" class="primary-button" @click="showPreviewModal = false; openEditModal(previewRow)">
+          <Edit3 :size="15" /> Edit Pengembalian
+        </button>
+      </template>
+    </BaseModal>
 
     <BaseModal
       :open="showModal"

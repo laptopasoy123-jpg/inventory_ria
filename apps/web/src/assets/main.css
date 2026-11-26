@@ -1771,3 +1771,9 @@ tbody tr:hover {
     justify-content: space-between;
   }
 }
+
+@media print {
+  .screen-only-cell {
+    display: none !important;
+  }
+}

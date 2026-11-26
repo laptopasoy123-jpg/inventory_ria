@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
-import { AlertTriangle, CalendarRange, CheckSquare, Download, FileDown, Printer, RefreshCw, RotateCcw, Search } from '@lucide/vue'
+import { AlertTriangle, CalendarRange, CheckSquare, Download, Eye, FileDown, Printer, RefreshCw, RotateCcw, Search } from '@lucide/vue'
+import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import { api, attachmentUrl, conditionLabel, downloadCsv, formatCurrency, formatDate, formatNumber, imageUrlToDataUrl, invalidateApiCache, variantLabel } from '@/lib/api'
 import type { PdfSectionTable } from '@/lib/pdf-report'
@@ -16,6 +17,19 @@ const toast = useToast()
 const activeTab = ref<ReportTab>('all')
 const loading = ref(true)
 const loadError = ref('')
+
+// Universal Row Preview Modal
+const showRowPreview = ref(false)
+const rowPreviewTitle = ref('')
+const rowPreviewEyebrow = ref('')
+const rowPreviewFields = ref<Array<{ label: string; value: string }>>([])
+
+function openRowPreview(eyebrow: string, title: string, fields: Array<{ label: string; value: string }>) {
+  rowPreviewEyebrow.value = eyebrow
+  rowPreviewTitle.value = title
+  rowPreviewFields.value = fields
+  showRowPreview.value = true
+}
 
 const dateFrom = ref('')
 const dateTo = ref('')
@@ -627,19 +641,28 @@ onActivated(() => { void loadAll(true) })
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th v-for="h in sec.headers" :key="h">{{ h }}</th></tr>
+                <tr><th v-for="h in sec.headers" :key="h">{{ h }}</th><th class="screen-only-cell">Aksi</th></tr>
               </thead>
               <tbody>
                 <tr v-for="(row, rIdx) in sec.rows.slice(0, 50)" :key="rIdx">
                   <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
+                  <td class="screen-only-cell">
+                    <button
+                      class="icon-button"
+                      title="Preview detail baris"
+                      @click="openRowPreview(sec.title, String(row[0] || 'Detail Data'), sec.headers.map((h, i) => ({ label: h, value: String(row[i] ?? '-') })))"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                  </td>
                 </tr>
                 <tr v-if="sec.rows.length > 50">
-                  <td :colspan="sec.headers.length" class="muted-text" style="text-align:center;">
+                  <td :colspan="sec.headers.length + 1" class="muted-text" style="text-align:center;">
                     Menampilkan 50 dari {{ sec.rows.length }} baris. Gunakan Download PDF / Ekspor CSV untuk seluruh baris.
                   </td>
                 </tr>
                 <tr v-if="!sec.rows.length">
-                  <td :colspan="sec.headers.length"><div class="empty-state compact">Tidak ada data pada filter/periode ini.</div></td>
+                  <td :colspan="sec.headers.length + 1"><div class="empty-state compact">Tidak ada data pada filter/periode ini.</div></td>
                 </tr>
               </tbody>
             </table>
@@ -649,7 +672,7 @@ onActivated(() => { void loadAll(true) })
 
       <div v-else-if="activeTab === 'stock'" class="table-wrap">
         <table>
-          <thead><tr><th>Kode &amp; Barang</th><th>Satuan</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Stok Tersedia Saat Ini</th></tr></thead>
+          <thead><tr><th>Kode &amp; Barang</th><th>Satuan</th><th>Baru</th><th>Bekas Layak</th><th>Karantina</th><th>Rusak</th><th>Stok Tersedia Saat Ini</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <tr v-for="v in filteredVariants" :key="v.variant_id">
               <td><strong>{{ variantLabel(v) }}</strong><small class="table-sub">{{ v.code }}</small></td>
@@ -659,15 +682,33 @@ onActivated(() => { void loadAll(true) })
               <td>{{ formatNumber(v.stock_quarantine) }} {{ v.unit }}</td>
               <td>{{ formatNumber(v.stock_damaged) }} {{ v.unit }}</td>
               <td><strong>{{ formatNumber(v.total_available) }} {{ v.unit }}</strong></td>
+              <td class="screen-only-cell">
+                <button
+                  class="icon-button"
+                  title="Preview stok barang"
+                  @click="openRowPreview('Preview Stok Saat Ini', variantLabel(v), [
+                    { label: 'Kode', value: v.code },
+                    { label: 'Nama Barang', value: variantLabel(v) },
+                    { label: 'Satuan', value: v.unit },
+                    { label: 'Baru', value: `${formatNumber(v.stock_new)} ${v.unit}` },
+                    { label: 'Bekas Layak', value: `${formatNumber(v.stock_used_good)} ${v.unit}` },
+                    { label: 'Karantina', value: `${formatNumber(v.stock_quarantine)} ${v.unit}` },
+                    { label: 'Rusak', value: `${formatNumber(v.stock_damaged)} ${v.unit}` },
+                    { label: 'Stok Tersedia Saat Ini', value: `${formatNumber(v.total_available)} ${v.unit}` },
+                  ])"
+                >
+                  <Eye :size="15" />
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filteredVariants.length"><td colspan="7"><div class="empty-state compact">Tidak ada barang yang cocok.</div></td></tr>
+            <tr v-if="!filteredVariants.length"><td colspan="8"><div class="empty-state compact">Tidak ada barang yang cocok.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else-if="activeTab === 'movements'" class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Setelah Mutasi</th><th>Catatan</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Barang</th><th>Jenis Mutasi</th><th>Kondisi</th><th>Perubahan</th><th>Stok Setelah Mutasi</th><th>Catatan</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <tr v-for="m in filteredMovements" :key="m.id">
               <td>{{ formatDate(m.occurred_at) }}</td>
@@ -677,15 +718,31 @@ onActivated(() => { void loadAll(true) })
               <td><span class="delta-pill" :class="m.quantity_delta >= 0 ? 'plus' : 'minus'">{{ m.quantity_delta >= 0 ? '+' : '' }}{{ formatNumber(m.quantity_delta) }} {{ m.item_variants?.items?.unit || '' }}</span></td>
               <td><strong>{{ formatNumber(m.balance_after) }} {{ m.item_variants?.items?.unit || '' }}</strong></td>
               <td>{{ m.notes || '-' }}</td>
+              <td class="screen-only-cell">
+                <button
+                  class="icon-button"
+                  title="Preview mutasi"
+                  @click="openRowPreview('Preview Mutasi Stok', variantLabel({ name: m.item_variants?.items?.name || '-', size: m.item_variants?.size }), [
+                    { label: 'Tanggal', value: formatDate(m.occurred_at) },
+                    { label: 'Jenis Mutasi', value: movementName(m.movement_type) },
+                    { label: 'Kondisi', value: conditionLabel(m.condition) },
+                    { label: 'Perubahan', value: `${m.quantity_delta >= 0 ? '+' : ''}${formatNumber(m.quantity_delta)} ${m.item_variants?.items?.unit || ''}` },
+                    { label: 'Stok Setelah Mutasi', value: `${formatNumber(m.balance_after)} ${m.item_variants?.items?.unit || ''}` },
+                    { label: 'Catatan', value: m.notes || '-' },
+                  ])"
+                >
+                  <Eye :size="15" />
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filteredMovements.length"><td colspan="7"><div class="empty-state compact">Tidak ada mutasi pada rentang tanggal/filter ini.</div></td></tr>
+            <tr v-if="!filteredMovements.length"><td colspan="8"><div class="empty-state compact">Tidak ada mutasi pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else-if="activeTab === 'procurements'" class="table-wrap">
         <table>
-          <thead><tr><th>No. Pengadaan</th><th>Supplier</th><th>Progress Barang</th><th>Nilai Pengadaan</th><th>Status</th></tr></thead>
+          <thead><tr><th>No. Pengadaan</th><th>Supplier</th><th>Progress Barang</th><th>Nilai Pengadaan</th><th>Status</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <tr v-for="p in filteredProcurements" :key="p.procurement_no">
               <td><strong>{{ p.procurement_no }}</strong><small class="table-sub">{{ formatDate(p.procurement_date) }} {{ p.po_number ? `· PO: ${p.po_number}` : '' }}</small></td>
@@ -693,15 +750,32 @@ onActivated(() => { void loadAll(true) })
               <td><strong>{{ p.progress_percent }}%</strong> ({{ formatNumber(p.total_received) }} / {{ formatNumber(p.total_ordered) }})</td>
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td><span class="status-pill" :class="p.status === 'completed' ? 'safe' : p.status === 'cancelled' ? 'out' : 'amber'">{{ p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' }}</span></td>
+              <td class="screen-only-cell">
+                <button
+                  class="icon-button"
+                  title="Preview pengadaan"
+                  @click="openRowPreview('Preview Pengadaan', p.procurement_no, [
+                    { label: 'No. Pengadaan', value: p.procurement_no },
+                    { label: 'No. PO', value: p.po_number || '-' },
+                    { label: 'Tanggal', value: formatDate(p.procurement_date) },
+                    { label: 'Supplier', value: p.supplier_name },
+                    { label: 'Progress', value: `${formatNumber(p.total_received)} / ${formatNumber(p.total_ordered)} (${p.progress_percent}%)` },
+                    { label: 'Nilai Pengadaan', value: formatCurrency(p.total_amount) },
+                    { label: 'Status', value: p.status === 'completed' ? 'Terpenuhi' : p.status === 'partial' ? 'Sebagian' : p.status === 'cancelled' ? 'Dibatalkan' : 'Menunggu' },
+                  ])"
+                >
+                  <Eye :size="15" />
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filteredProcurements.length"><td colspan="5"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal/filter ini.</div></td></tr>
+            <tr v-if="!filteredProcurements.length"><td colspan="6"><div class="empty-state compact">Tidak ada pengadaan pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else-if="activeTab === 'opname'" class="table-wrap">
         <table>
-          <thead><tr><th>No. SO</th><th>Barang</th><th>Kondisi</th><th>Sistem</th><th>Fisik</th><th>Selisih (+/-)</th><th>Alasan</th></tr></thead>
+          <thead><tr><th>No. SO</th><th>Barang</th><th>Kondisi</th><th>Sistem</th><th>Fisik</th><th>Selisih (+/-)</th><th>Alasan</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <template v-for="st in filteredStocktakes" :key="st.stocktake_no">
               <tr v-for="(it, idx) in st.stocktake_items" :key="`${st.stocktake_no}-${idx}`">
@@ -716,16 +790,35 @@ onActivated(() => { void loadAll(true) })
                   </span>
                 </td>
                 <td>{{ it.reason || '-' }}</td>
+                <td class="screen-only-cell">
+                  <button
+                    class="icon-button"
+                    title="Preview baris opname"
+                    @click="openRowPreview('Preview Stok Opname', `${st.stocktake_no} · ${variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size })}`, [
+                      { label: 'No. SO', value: st.stocktake_no },
+                      { label: 'Tanggal SO', value: formatDate(st.reference_at) },
+                      { label: 'Petugas', value: st.officer_name },
+                      { label: 'Barang', value: variantLabel({ name: it.item_variants?.items?.name || '-', size: it.item_variants?.size }) },
+                      { label: 'Kondisi', value: conditionLabel(it.condition) },
+                      { label: 'Stok Sistem', value: formatNumber(it.system_quantity) },
+                      { label: 'Stok Fisik', value: formatNumber(it.physical_quantity) },
+                      { label: 'Selisih (+/-)', value: `${it.physical_quantity - it.system_quantity > 0 ? '+' : ''}${formatNumber(it.physical_quantity - it.system_quantity)}` },
+                      { label: 'Alasan', value: it.reason || '-' },
+                    ])"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                </td>
               </tr>
             </template>
-            <tr v-if="!filteredStocktakes.length"><td colspan="7"><div class="empty-state compact">Tidak ada laporan stok opname pada rentang tanggal/filter ini.</div></td></tr>
+            <tr v-if="!filteredStocktakes.length"><td colspan="8"><div class="empty-state compact">Tidak ada laporan stok opname pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else-if="activeTab === 'liabilities'" class="table-wrap">
         <table>
-          <thead><tr><th>No. Pengeluaran</th><th>Karyawan</th><th>Departemen</th><th>Barang</th><th>Sisa Dibawa</th><th>Keperluan</th></tr></thead>
+          <thead><tr><th>No. Pengeluaran</th><th>Karyawan</th><th>Departemen</th><th>Barang</th><th>Sisa Dibawa</th><th>Keperluan</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <tr v-for="(l, idx) in filteredLiabilities" :key="l.id || idx">
               <td><strong>{{ l.issuances?.transaction_no || '-' }}</strong><small class="table-sub">{{ formatDate(l.issuances?.issued_at) }}</small></td>
@@ -734,15 +827,32 @@ onActivated(() => { void loadAll(true) })
               <td>{{ variantLabel({ name: l.item_variants?.items?.name, size: l.item_variants?.size }) }}</td>
               <td><strong class="text-amber">{{ formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity)) }} {{ l.item_variants?.items?.unit }}</strong></td>
               <td>{{ l.purpose }}</td>
+              <td class="screen-only-cell">
+                <button
+                  class="icon-button"
+                  title="Preview tanggungan karyawan"
+                  @click="openRowPreview('Preview Tanggungan Karyawan', l.issuances?.employees?.name || '-', [
+                    { label: 'No. Pengeluaran', value: l.issuances?.transaction_no || '-' },
+                    { label: 'Tanggal Keluar', value: formatDate(l.issuances?.issued_at) },
+                    { label: 'Karyawan', value: `${l.issuances?.employees?.name || '-'} (${l.issuances?.employees?.nik || '-'})` },
+                    { label: 'Departemen', value: l.issuances?.employees?.departments?.name || '-' },
+                    { label: 'Barang APD', value: variantLabel({ name: l.item_variants?.items?.name || '-', size: l.item_variants?.size }) },
+                    { label: 'Sisa Tanggungan', value: `${formatNumber(Number(l.quantity) - Number(l.returned_quantity) - Number(l.resolved_lost_quantity))} ${l.item_variants?.items?.unit || ''}` },
+                    { label: 'Keperluan', value: l.purpose || '-' },
+                  ])"
+                >
+                  <Eye :size="15" />
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filteredLiabilities.length"><td colspan="6"><div class="empty-state compact">Tidak ada tanggungan aktif yang cocok dengan filter/rentang tanggal ini.</div></td></tr>
+            <tr v-if="!filteredLiabilities.length"><td colspan="7"><div class="empty-state compact">Tidak ada tanggungan aktif yang cocok dengan filter/rentang tanggal ini.</div></td></tr>
           </tbody>
         </table>
       </div>
 
       <div v-else class="table-wrap">
         <table>
-          <thead><tr><th>Tanggal</th><th>No. Pengadaan</th><th>No. PO</th><th>Supplier</th><th>Nominal</th><th>Progress</th></tr></thead>
+          <thead><tr><th>Tanggal</th><th>No. Pengadaan</th><th>No. PO</th><th>Supplier</th><th>Nominal</th><th>Progress</th><th class="screen-only-cell">Aksi</th></tr></thead>
           <tbody>
             <tr v-for="(p, idx) in filteredPayments" :key="idx">
               <td>{{ formatDate(p.procurement_date) }}</td>
@@ -751,12 +861,44 @@ onActivated(() => { void loadAll(true) })
               <td>{{ p.supplier_name }}</td>
               <td><strong>{{ formatCurrency(p.total_amount) }}</strong></td>
               <td>{{ p.progress_percent }}%</td>
+              <td class="screen-only-cell">
+                <button
+                  class="icon-button"
+                  title="Preview pembayaran"
+                  @click="openRowPreview('Preview History Pembayaran', p.procurement_no, [
+                    { label: 'Tanggal', value: formatDate(p.procurement_date) },
+                    { label: 'No. Pengadaan', value: p.procurement_no },
+                    { label: 'No. PO', value: p.po_number || '-' },
+                    { label: 'Supplier', value: p.supplier_name },
+                    { label: 'Nominal', value: formatCurrency(p.total_amount) },
+                    { label: 'Progress Kedatangan', value: `${p.progress_percent}%` },
+                  ])"
+                >
+                  <Eye :size="15" />
+                </button>
+              </td>
             </tr>
-            <tr v-if="!filteredPayments.length"><td colspan="6"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal/filter ini.</div></td></tr>
+            <tr v-if="!filteredPayments.length"><td colspan="7"><div class="empty-state compact">Tidak ada history pembayaran pada rentang tanggal/filter ini.</div></td></tr>
           </tbody>
         </table>
       </div>
     </section>
+
+    <BaseModal :open="showRowPreview" :title="rowPreviewTitle" :eyebrow="rowPreviewEyebrow" size="sm" @close="showRowPreview = false">
+      <div class="table-wrap" style="margin-top:0;">
+        <table>
+          <tbody>
+            <tr v-for="f in rowPreviewFields" :key="f.label">
+              <th style="width:42%;">{{ f.label }}</th>
+              <td><strong>{{ f.value }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showRowPreview = false">Tutup</button>
+      </template>
+    </BaseModal>
 
     <!-- Print-Only Multi-Section View (renders ONLY checked sections cleanly when printing!) -->
     <div class="print-multi-sections">

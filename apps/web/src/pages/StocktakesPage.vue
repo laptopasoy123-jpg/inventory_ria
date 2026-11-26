@@ -71,6 +71,14 @@ const showDetailModal = ref(false)
 const activeStocktake = ref<StocktakeRow | null>(null)
 const finalizing = ref(false)
 
+const showLostPreviewModal = ref(false)
+const activeLostLog = ref<(typeof lostLogs.value)[number] | null>(null)
+
+function openLostPreview(log: (typeof lostLogs.value)[number]) {
+  activeLostLog.value = log
+  showLostPreviewModal.value = true
+}
+
 // Stat History Drill-down Modal
 const statModalOpen = ref(false)
 const statModalTitle = ref('')
@@ -652,7 +660,7 @@ onActivated(() => {
 
       <div v-if="activeTab === 'lost_logs'" class="table-wrap">
         <table>
-          <thead><tr><th>No. Pengembalian</th><th>Tanggal</th><th>Karyawan</th><th>Barang Hilang</th><th>Jumlah</th><th>Catatan / Alasan</th></tr></thead>
+          <thead><tr><th>No. Pengembalian</th><th>Tanggal</th><th>Karyawan</th><th>Barang Hilang</th><th>Jumlah</th><th>Catatan / Alasan</th><th>Aksi</th></tr></thead>
           <tbody>
             <tr v-for="log in pagedLostLogs" :key="log.id">
               <td><strong>{{ log.transaction_no }}</strong></td>
@@ -661,9 +669,12 @@ onActivated(() => {
               <td>{{ log.item_name }}</td>
               <td><span class="delta-pill minus">-{{ formatNumber(log.qty) }} {{ log.unit }}</span></td>
               <td>{{ log.reason }}</td>
+              <td>
+                <button class="icon-button" title="Preview detail kehilangan" @click="openLostPreview(log)"><Eye :size="15" /></button>
+              </td>
             </tr>
             <tr v-if="!loading && !filteredLostLogs.length">
-              <td colspan="6"><div class="empty-state compact"><AlertTriangle :size="24" /><strong>Belum ada catatan kehilangan yang cocok.</strong></div></td>
+              <td colspan="7"><div class="empty-state compact"><AlertTriangle :size="24" /><strong>Belum ada catatan kehilangan yang cocok.</strong></div></td>
             </tr>
           </tbody>
         </table>
@@ -831,6 +842,30 @@ onActivated(() => {
         <button v-if="activeStocktake?.status === 'pending_review'" type="button" class="primary-button" :disabled="finalizing" @click="finalizeExisting(activeStocktake.id)">
           <CheckCircle2 :size="15" /> Finalisasi &amp; Sesuaikan Stok
         </button>
+      </template>
+    </BaseModal>
+
+    <BaseModal
+      :open="showLostPreviewModal"
+      :title="`Detail Kehilangan · ${activeLostLog?.transaction_no || ''}`"
+      eyebrow="Preview Catatan Hilang Pengembalian"
+      size="sm"
+      @close="showLostPreviewModal = false"
+    >
+      <div v-if="activeLostLog" class="table-wrap" style="margin-top:0;">
+        <table>
+          <tbody>
+            <tr><th style="width:40%;">No. Pengembalian</th><td><strong>{{ activeLostLog.transaction_no }}</strong></td></tr>
+            <tr><th>Tanggal</th><td>{{ formatDate(activeLostLog.returned_at) }}</td></tr>
+            <tr><th>Karyawan</th><td><strong>{{ activeLostLog.employee_name }}</strong></td></tr>
+            <tr><th>Barang Hilang</th><td><strong>{{ activeLostLog.item_name }}</strong></td></tr>
+            <tr><th>Jumlah Hilang</th><td><span class="delta-pill minus">-{{ formatNumber(activeLostLog.qty) }} {{ activeLostLog.unit }}</span></td></tr>
+            <tr><th>Alasan / Kronologi</th><td>{{ activeLostLog.reason }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showLostPreviewModal = false">Tutup</button>
       </template>
     </BaseModal>
 

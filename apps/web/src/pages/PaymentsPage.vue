@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowUpDown, CalendarRange, Download, Edit3, FileDown, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
+import { ArrowUpDown, CalendarRange, Download, Edit3, Eye, FileDown, ReceiptText, RotateCcw, Search, ShoppingBag, Trash2, Truck, Wallet } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -91,6 +91,15 @@ const poEditForm = reactive({
 // Edit Non-PO modal
 const showReceiptEditModal = ref(false)
 const editingDirectRow = ref<EditablePurchase | null>(null)
+
+// Preview Modal
+const showPreviewModal = ref(false)
+const previewRow = ref<UnifiedTxRow | null>(null)
+
+function openPreview(row: UnifiedTxRow) {
+  previewRow.value = row
+  showPreviewModal.value = true
+}
 
 // Stat History Drill-down Modal
 const statModalOpen = ref(false)
@@ -566,6 +575,7 @@ onActivated(() => {
               <td>{{ row.note }}</td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview detail pembayaran" @click="openPreview(row)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Edit transaksi pembayaran" @click="openEditRow(row)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus transaksi pembayaran" @click="deleteRow(row)"><Trash2 :size="15" /></button>
                 </div>
@@ -580,6 +590,42 @@ onActivated(() => {
       </div>
       <PaginationBar v-model:page="page" :total-items="filteredRows.length" />
     </section>
+
+    <!-- Preview Payment Modal -->
+    <BaseModal
+      :open="showPreviewModal"
+      :title="`Detail Pembayaran · ${previewRow?.docNo || ''}`"
+      eyebrow="Preview History Pembayaran"
+      :subtitle="previewRow ? `${previewRow.refLabel} · Tanggal ${formatDate(previewRow.date)}` : ''"
+      size="md"
+      @close="showPreviewModal = false"
+    >
+      <div v-if="previewRow" class="detail-stack">
+        <div class="summary-banner">
+          <div><small>Sumber Transaksi</small><strong>{{ previewRow.source === 'po' ? 'Pengadaan (PO)' : 'Pembelian Langsung (Non-PO)' }}</strong></div>
+          <div><small>Supplier / Toko</small><strong>{{ previewRow.vendor }}</strong></div>
+          <div><small>Nominal Tercatat</small><strong class="text-primary">{{ previewRow.amount !== null ? formatCurrency(previewRow.amount) : 'Non-PO' }}</strong></div>
+        </div>
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <tbody>
+              <tr><th style="width:36%;">No. Dokumen</th><td><strong>{{ previewRow.docNo }}</strong></td></tr>
+              <tr><th>Referensi</th><td>{{ previewRow.refLabel }}</td></tr>
+              <tr><th>Tanggal</th><td>{{ formatDate(previewRow.date) }}</td></tr>
+              <tr><th>Sumber Dana</th><td><span class="tag-pill">{{ previewRow.fundingLabel }}</span></td></tr>
+              <tr><th>Metode Pembayaran</th><td>{{ previewRow.methodLabel }}</td></tr>
+              <tr><th>Keterangan / Alasan</th><td>{{ previewRow.note }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button v-if="previewRow" type="button" class="primary-button" @click="showPreviewModal = false; openEditRow(previewRow)">
+          <Edit3 :size="15" /> Edit Pembayaran
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Edit PO Payment Modal -->
     <BaseModal

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertTriangle, ArrowUpDown, CalendarRange, Edit3, PackageMinus, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
+import { AlertTriangle, ArrowUpDown, CalendarRange, Edit3, Eye, PackageMinus, Plus, RotateCcw, Search, Trash2, Upload } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
 import ModernSelect from '@/components/ModernSelect.vue'
 import PaginationBar from '@/components/PaginationBar.vue'
@@ -38,8 +38,15 @@ const dateTo = ref('')
 const page = ref(1)
 const showModal = ref(false)
 const editingId = ref<string | null>(null)
+const showPreviewModal = ref(false)
+const previewRow = ref<IssuanceRow | null>(null)
 const saving = ref(false)
 const uploading = ref(false)
+
+function openPreview(row: IssuanceRow) {
+  previewRow.value = row
+  showPreviewModal.value = true
+}
 
 const form = reactive({
   issuedAt: new Date().toISOString().slice(0, 10),
@@ -400,6 +407,7 @@ onActivated(() => {
               <td>{{ row.officer_name }}</td>
               <td>
                 <div class="row-actions">
+                  <button class="icon-button" title="Preview detail barang keluar" @click="openPreview(row)"><Eye :size="15" /></button>
                   <button
                     class="icon-button"
                     :disabled="row.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
@@ -428,6 +436,60 @@ onActivated(() => {
       </div>
       <PaginationBar v-model:page="page" :total-items="filtered.length" />
     </section>
+
+    <BaseModal
+      :open="showPreviewModal"
+      :title="`Detail Barang Keluar · ${previewRow?.transaction_no || ''}`"
+      eyebrow="Preview Distribusi APD"
+      :subtitle="previewRow ? `Tanggal Penyerahan: ${formatDate(previewRow.issued_at)}` : ''"
+      size="lg"
+      @close="showPreviewModal = false"
+    >
+      <div v-if="previewRow" class="detail-stack">
+        <div class="summary-banner">
+          <div><small>Karyawan Penerima</small><strong>{{ previewRow.employees?.name || '-' }} ({{ previewRow.employees?.nik || '-' }})</strong></div>
+          <div><small>Departemen &amp; Jabatan</small><strong>{{ previewRow.employees?.departments?.name || '-' }} · {{ previewRow.employees?.position || '-' }}</strong></div>
+          <div><small>Petugas Penyerah</small><strong>{{ previewRow.officer_name }}</strong></div>
+        </div>
+        <p v-if="previewRow.notes" class="muted-text" style="font-size:12.5px;"><strong>Catatan:</strong> {{ previewRow.notes }}</p>
+        <div v-if="previewRow.handover_proof_key">
+          <a :href="attachmentUrl(previewRow.handover_proof_key)" target="_blank" rel="noopener noreferrer" class="secondary-button xs highlight">
+            Lihat Foto Bukti / Berita Acara ↗
+          </a>
+        </div>
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <thead><tr><th>Barang &amp; Ukuran</th><th>Kondisi</th><th>Keluar</th><th>Kembali / Hilang</th><th>Sisa Dibawa</th><th>Keperluan</th></tr></thead>
+            <tbody>
+              <tr v-for="it in previewRow.issuance_items" :key="it.id">
+                <td><strong>{{ variantLabel({ name: it.item_variants?.items?.name || 'Barang', size: it.item_variants?.size }) }}</strong></td>
+                <td><span class="tag-pill">{{ conditionLabel(it.condition) }}</span></td>
+                <td><span class="delta-pill minus">-{{ formatNumber(it.quantity) }} {{ it.item_variants?.items?.unit }}</span></td>
+                <td>{{ formatNumber(it.returned_quantity) }} kembali / {{ formatNumber(it.resolved_lost_quantity) }} hilang</td>
+                <td>
+                  <strong v-if="it.item_variants?.items?.return_required" :class="it.quantity - it.returned_quantity - it.resolved_lost_quantity > 0 ? 'text-amber' : 'text-primary'">
+                    {{ formatNumber(it.quantity - it.returned_quantity - it.resolved_lost_quantity) }} {{ it.item_variants?.items?.unit }}
+                  </strong>
+                  <span v-else class="tag-pill">Habis Pakai</span>
+                </td>
+                <td>{{ it.purpose }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button
+          v-if="previewRow && !previewRow.issuance_items.some((it) => it.returned_quantity > 0 || it.resolved_lost_quantity > 0)"
+          type="button"
+          class="primary-button"
+          @click="showPreviewModal = false; openEditModal(previewRow)"
+        >
+          <Edit3 :size="15" /> Edit Barang Keluar
+        </button>
+      </template>
+    </BaseModal>
 
     <BaseModal
       :open="showModal"

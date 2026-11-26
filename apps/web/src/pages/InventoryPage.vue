@@ -2,7 +2,7 @@
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ArrowRightLeft, ClipboardList, Download, Edit3,
+  ArrowRightLeft, ClipboardList, Download, Edit3, Eye,
   History, PackageOpen, Plus, Printer, RotateCcw, Search, Trash2,
 } from '@lucide/vue'
 import BaseModal from '@/components/BaseModal.vue'
@@ -78,6 +78,22 @@ const showHistoryModal = ref(false)
 const historyRow = ref<StockRow | null>(null)
 const movements = ref<MovementRow[]>([])
 const loadingHistory = ref(false)
+
+// Preview Modal
+const showPreviewModal = ref(false)
+const previewRow = ref<StockRow | null>(null)
+const showSoPreviewModal = ref(false)
+const previewSoItem = ref<(typeof flatSoItems.value)[number] | null>(null)
+
+function openPreview(row: StockRow) {
+  previewRow.value = row
+  showPreviewModal.value = true
+}
+
+function openSoPreview(item: (typeof flatSoItems.value)[number]) {
+  previewSoItem.value = item
+  showSoPreviewModal.value = true
+}
 
 // Quarantine Transfer Modal
 const showTransferModal = ref(false)
@@ -764,6 +780,7 @@ onActivated(() => {
                   >
                     <ArrowRightLeft :size="13" /> Pindah Kondisi
                   </button>
+                  <button class="icon-button" title="Preview detail barang & stok" @click="openPreview(row)"><Eye :size="15" /></button>
                   <button class="icon-button" title="Riwayat mutasi" @click="openHistory(row)"><History :size="16" /></button>
                   <button class="icon-button" title="Edit barang" @click="openEditItem(row)"><Edit3 :size="15" /></button>
                   <button class="icon-button danger" title="Hapus barang" @click="deleteInventoryItem(row)"><Trash2 :size="15" /></button>
@@ -807,6 +824,7 @@ onActivated(() => {
                 <th>Fisik</th>
                 <th>Selisih (+/-)</th>
                 <th>Alasan / Catatan</th>
+                <th>Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -823,11 +841,14 @@ onActivated(() => {
                   </span>
                 </td>
                 <td>{{ item.reason }}</td>
+                <td>
+                  <button class="icon-button" title="Preview detail selisih SO" @click="openSoPreview(item)"><Eye :size="15" /></button>
+                </td>
               </tr>
               <tr v-if="!loadingSo && !filteredSoItems.length">
-                <td colspan="8"><div class="empty-state compact">Belum ada laporan selisih (+/-) yang cocok.</div></td>
+                <td colspan="9"><div class="empty-state compact">Belum ada laporan selisih (+/-) yang cocok.</div></td>
               </tr>
-              <tr v-if="loadingSo"><td colspan="8"><div class="loading-row">Memuat laporan selisih Stok Opname...</div></td></tr>
+              <tr v-if="loadingSo"><td colspan="9"><div class="loading-row">Memuat laporan selisih Stok Opname...</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -914,6 +935,87 @@ onActivated(() => {
         <button type="submit" form="opening-stock-form" class="primary-button" :disabled="savingOpening">
           {{ savingOpening ? 'Menyimpan...' : 'Simpan Stok Awal' }}
         </button>
+      </template>
+    </BaseModal>
+
+    <!-- Modal Preview Detail Barang & Stok -->
+    <BaseModal
+      :open="showPreviewModal"
+      :title="previewRow ? variantLabel(previewRow) : 'Detail Stok Barang'"
+      eyebrow="Preview Stok Inventaris"
+      :subtitle="previewRow ? `Kode ${previewRow.code} · Satuan ${previewRow.unit}` : ''"
+      size="md"
+      @close="showPreviewModal = false"
+    >
+      <div v-if="previewRow" class="detail-stack">
+        <div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;background:#f7fbfb;border:1px solid #dcebe9;">
+          <img v-if="previewRow.photo_key" :src="attachmentUrl(previewRow.photo_key)" class="item-thumb" style="width:56px;height:56px;border-radius:12px;" alt="Foto barang" />
+          <span v-else class="item-flaticon-box" style="width:56px;height:56px;border-radius:12px;">
+            <img :src="itemFlaticonIcon(previewRow.name)" :alt="previewRow.name" />
+          </span>
+          <div style="flex:1;min-width:0;">
+            <strong style="font-size:15px;display:block;color:var(--text);">{{ previewRow.name }}</strong>
+            <small class="table-sub">Kode: {{ previewRow.code }} · Ukuran: {{ previewRow.size && previewRow.size !== '-' ? previewRow.size : 'Standar' }}</small>
+          </div>
+          <span class="status-pill" :class="previewRow.stock_status">
+            {{ previewRow.stock_status === 'safe' ? 'Aman' : previewRow.stock_status === 'low' ? 'Menipis' : 'Habis' }}
+          </span>
+        </div>
+
+        <div class="summary-banner">
+          <div><small>Stok Tersedia (Baru + Layak)</small><strong class="text-primary">{{ formatNumber(previewRow.total_available) }} {{ previewRow.unit }}</strong></div>
+          <div><small>Batas Minimum</small><strong>{{ formatNumber(previewRow.minimum_stock) }} {{ previewRow.unit }}</strong></div>
+          <div><small>Karantina + Rusak</small><strong>{{ formatNumber(Number(previewRow.stock_quarantine) + Number(previewRow.stock_damaged)) }} {{ previewRow.unit }}</strong></div>
+        </div>
+
+        <div class="table-wrap" style="margin-top:0;">
+          <table>
+            <thead><tr><th>Kondisi Stok</th><th>Jumlah</th><th>Keterangan</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Baru</strong></td><td><strong>{{ formatNumber(previewRow.stock_new) }} {{ previewRow.unit }}</strong></td><td>Siap pakai (segel/baru)</td></tr>
+              <tr><td><strong>Bekas Layak</strong></td><td><strong>{{ formatNumber(previewRow.stock_used_good) }} {{ previewRow.unit }}</strong></td><td>Siap pakai (layak pakai ulang)</td></tr>
+              <tr><td><strong>Karantina</strong></td><td><strong>{{ formatNumber(previewRow.stock_quarantine) }} {{ previewRow.unit }}</strong></td><td>Menunggu inspeksi / pembersihan</td></tr>
+              <tr><td><strong>Rusak</strong></td><td><strong>{{ formatNumber(previewRow.stock_damaged) }} {{ previewRow.unit }}</strong></td><td>Tidak layak pakai / afval</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showPreviewModal = false">Tutup</button>
+        <button v-if="previewRow" type="button" class="secondary-button" @click="showPreviewModal = false; openHistory(previewRow)">
+          <History :size="15" /> Riwayat Mutasi
+        </button>
+        <button v-if="previewRow" type="button" class="primary-button" @click="showPreviewModal = false; openEditItem(previewRow)">
+          <Edit3 :size="15" /> Edit Barang
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Modal Preview Baris Selisih SO -->
+    <BaseModal
+      :open="showSoPreviewModal"
+      :title="`Detail Selisih · ${previewSoItem?.stocktakeNo || ''}`"
+      eyebrow="Preview Laporan Selisih SO"
+      size="sm"
+      @close="showSoPreviewModal = false"
+    >
+      <div v-if="previewSoItem" class="table-wrap" style="margin-top:0;">
+        <table>
+          <tbody>
+            <tr><th style="width:40%;">No. SO</th><td><strong>{{ previewSoItem.stocktakeNo }}</strong></td></tr>
+            <tr><th>Tanggal SO</th><td>{{ formatDate(previewSoItem.referenceAt) }}</td></tr>
+            <tr><th>Petugas</th><td>{{ previewSoItem.officerName }}</td></tr>
+            <tr><th>Barang</th><td><strong>{{ previewSoItem.itemName }}</strong></td></tr>
+            <tr><th>Kondisi</th><td>{{ conditionLabel(previewSoItem.condition) }}</td></tr>
+            <tr><th>Stok Sistem</th><td>{{ formatNumber(previewSoItem.systemQty) }} {{ previewSoItem.unit }}</td></tr>
+            <tr><th>Stok Fisik</th><td>{{ formatNumber(previewSoItem.physicalQty) }} {{ previewSoItem.unit }}</td></tr>
+            <tr><th>Selisih (+/-)</th><td><span class="delta-pill" :class="previewSoItem.diff > 0 ? 'plus' : previewSoItem.diff < 0 ? 'minus' : 'zero'">{{ previewSoItem.diff > 0 ? '+' : '' }}{{ formatNumber(previewSoItem.diff) }} {{ previewSoItem.unit }}</span></td></tr>
+            <tr><th>Alasan / Catatan</th><td>{{ previewSoItem.reason }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <button type="button" class="secondary-button" @click="showSoPreviewModal = false">Tutup</button>
       </template>
     </BaseModal>
 
