@@ -145,7 +145,11 @@ const filtered = computed(() => {
   })
 })
 
-const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filtered.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filtered.value.slice((cur - 1) * 10, cur * 10)
+})
 watch([search, employeeFilter, departmentFilter, officerFilter, itemFilter, liabilityFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function variantInfo(variantId: string) {
@@ -337,7 +341,7 @@ onActivated(() => {
       <div>
         <p class="eyebrow">Distribusi APD</p>
         <h2>Barang Keluar</h2>
-        <p>Serahkan APD ke karyawan. Saldo stok tersedia otomatis berkurang dan tanggungan tercatat untuk APD wajib kembali.</p>
+        <p>Serahkan APD ke karyawan. Stok tersedia otomatis berkurang dan tanggungan tercatat untuk APD wajib kembali.</p>
       </div>
       <div class="intro-actions">
         <button class="primary-button" @click="openModal"><Plus :size="17" /> Catat Barang Keluar</button>
@@ -483,7 +487,7 @@ onActivated(() => {
       :open="showModal"
       :title="editingId ? 'Edit Barang Keluar' : 'Catat Barang Keluar (Penyerahan APD)'"
       eyebrow="Distribusi Inventaris"
-      subtitle="Pilih barang dan jumlah keluar; saldo stok tersedia otomatis berkurang."
+      subtitle="Pilih barang dan jumlah keluar; stok tersedia otomatis berkurang."
       size="lg"
       @close="showModal = false"
     >

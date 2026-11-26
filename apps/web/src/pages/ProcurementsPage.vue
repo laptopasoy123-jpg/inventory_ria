@@ -233,7 +233,11 @@ const variantOptions = computed(() =>
   })),
 )
 
-const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filteredRows.value.slice((cur - 1) * 10, cur * 10)
+})
 watch([statusFilter, search, supplierFilter, vendorTypeFilter, departmentFilter, fundingFilter, methodFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function variantInfo(variantId: string) {
@@ -477,6 +481,50 @@ function openStatHistory(kind: 'all' | 'pending_progress' | 'completed') {
   }
 }
 
+// Restore (Batal Cancel) Modal
+const showRestoreModal = ref(false)
+const restoringRow = ref<ProcurementRow | null>(null)
+const restoreNote = ref('')
+const restoring = ref(false)
+
+function expectedRestoredStatusLabel(row: ProcurementRow) {
+  const ordered = Number(row.total_ordered || 0)
+  const received = Number(row.total_received || 0)
+  if (ordered > 0 && received >= ordered) return 'Terpenuhi (100%)'
+  if (received > 0) return `Diterima Sebagian (${row.progress_percent}%)`
+  return 'Menunggu Barang'
+}
+
+function openRestoreModal(row: ProcurementRow) {
+  if (row.status !== 'cancelled') return
+  restoringRow.value = row
+  restoreNote.value = ''
+  showRestoreModal.value = true
+}
+
+async function confirmRestoreProcurement() {
+  const row = restoringRow.value
+  if (!row) return
+  restoring.value = true
+  try {
+    await api(`/api/procurements/${row.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: 'ordered',
+        cancelNote: restoreNote.value.trim() || undefined,
+      }),
+    })
+    showRestoreModal.value = false
+    showDetailModal.value = false
+    toast.success(`Pengadaan ${row.procurement_no} diaktifkan kembali (${expectedRestoredStatusLabel(row)})`, 'Batal Cancel Berhasil')
+    await load()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Gagal mengaktifkan kembali pengadaan')
+  } finally {
+    restoring.value = false
+  }
+}
+
 function cancelProcurement(row: ProcurementRow) {
   if (row.status === 'completed' || row.status === 'cancelled') return
   cancellingRow.value = row
@@ -677,6 +725,14 @@ onActivated(() => {
                     <XCircle :size="13" /> Cancel
                   </button>
                   <button
+                    v-if="row.status === 'cancelled'"
+                    class="secondary-button xs highlight"
+                    title="Tidak jadi dibatalkan — aktifkan kembali pengadaan ini"
+                    @click="openRestoreModal(row)"
+                  >
+                    <RotateCcw :size="13" /> Aktifkan Lagi
+                  </button>
+                  <button
                     class="icon-button"
                     title="Lihat detail & progress"
                     @click="openDetail(row.id)"
@@ -868,6 +924,9 @@ onActivated(() => {
       </div>
       <template #footer>
         <button type="button" class="secondary-button" @click="showDetailModal = false">Tutup</button>
+        <button v-if="detail && detail.status === 'cancelled'" type="button" class="primary-button" @click="openRestoreModal(detail)">
+          <RotateCcw :size="15" /> Aktifkan Lagi (Batal Cancel)
+        </button>
         <button v-if="detail && (detail.status === 'ordered' || detail.status === 'partial' || detail.status === 'draft')" type="button" class="secondary-button danger-soft" @click="cancelProcurement(detail)">
           <XCircle :size="15" /> Cancel Pengadaan
         </button>
@@ -919,6 +978,44 @@ onActivated(() => {
         <button type="button" class="secondary-button" :disabled="cancelling" @click="showCancelModal = false">Kembali</button>
         <button type="submit" form="cancel-proc-form" class="secondary-button danger-soft" :disabled="cancelling || !cancelNote.trim()">
           <XCircle :size="15" /> {{ cancelling ? 'Membatalkan...' : 'Konfirmasi Cancel Pengadaan' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- Restore / Batal Cancel Confirmation Modal -->
+    <BaseModal
+      :open="showRestoreModal"
+      :title="`Aktifkan Lagi · ${restoringRow?.procurement_no || ''}`"
+      eyebrow="Batal Cancel Pengadaan"
+      subtitle="Kembalikan status pengadaan ini menjadi aktif sesuai progress kedatangan barang."
+      size="sm"
+      @close="showRestoreModal = false"
+    >
+      <form v-if="restoringRow" id="restore-proc-form" class="modal-form" @submit.prevent="confirmRestoreProcurement">
+        <div class="summary-banner" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+          <div>
+            <small>Dokumen &amp; PO</small>
+            <strong>{{ restoringRow.procurement_no }}{{ restoringRow.po_number ? ` · ${restoringRow.po_number}` : '' }}</strong>
+          </div>
+          <div>
+            <small>Status Setelah Diaktifkan</small>
+            <strong>{{ expectedRestoredStatusLabel(restoringRow) }}</strong>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Catatan / Keterangan (Opsional)</span>
+          <textarea
+            v-model="restoreNote"
+            rows="3"
+            placeholder="Contoh: Salah pencet batal / pengadaan tetap dilanjutkan ke supplier..."
+          />
+        </label>
+      </form>
+      <template #footer>
+        <button type="button" class="secondary-button" :disabled="restoring" @click="showRestoreModal = false">Kembali</button>
+        <button type="submit" form="restore-proc-form" class="primary-button" :disabled="restoring">
+          <RotateCcw :size="15" /> {{ restoring ? 'Mengaktifkan...' : 'Ya, Aktifkan Lagi' }}
         </button>
       </template>
     </BaseModal>

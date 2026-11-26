@@ -277,7 +277,7 @@ function openStatHistory(kind: 'all' | 'safe' | 'attention' | 'quarantine_damage
   } else if (kind === 'attention') {
     const list = rows.value.filter((r) => r.stock_status === 'low' || r.stock_status === 'out')
     statModalTitle.value = 'Daftar Item Menipis & Habis'
-    statModalSubtitle.value = 'Item dengan saldo tersedia <= batas minimum stok'
+    statModalSubtitle.value = 'Item dengan stok tersedia <= batas minimum stok'
     statModalEmpty.value = 'Semua stok berada dalam batas aman.'
     statModalColumns.value = [
       { key: 'item', label: 'Barang APD' },
@@ -294,7 +294,7 @@ function openStatHistory(kind: 'all' | 'safe' | 'attention' | 'quarantine_damage
   } else {
     const list = rows.value.filter((r) => Number(r.stock_quarantine) > 0 || Number(r.stock_damaged) > 0)
     statModalTitle.value = 'Riwayat & Daftar Stok Karantina & Rusak'
-    statModalSubtitle.value = 'Stok ini dipisahkan dan tidak dihitung dalam saldo tersedia'
+    statModalSubtitle.value = 'Stok ini dipisahkan dan tidak dihitung dalam stok tersedia'
     statModalEmpty.value = 'Tidak ada barang di karantina atau rusak.'
     statModalColumns.value = [
       { key: 'item', label: 'Barang APD' },
@@ -311,7 +311,11 @@ function openStatHistory(kind: 'all' | 'safe' | 'attention' | 'quarantine_damage
   }
 }
 
-const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filteredRows.value.slice((cur - 1) * 10, cur * 10)
+})
 
 async function load() {
   loading.value = true
@@ -387,7 +391,7 @@ function stockFillPercent(row: StockRow) {
 async function openOpeningStockModal() {
   editingOpeningId.value = null
   openingForm.recordedAt = new Date().toISOString().slice(0, 10)
-  openingForm.notes = 'Saldo stok awal yang sudah ada sebelumnya'
+  openingForm.notes = 'Stok awal yang sudah ada sebelumnya'
   showOpeningModal.value = true
 
   try {
@@ -443,7 +447,7 @@ async function submitOpeningStock() {
         items: valid.map((i) => ({ ...i, quantity: Number(i.quantity), notes: i.notes || null })),
       }),
     })
-    toast.success(editingOpeningId.value ? 'Stok awal berhasil diperbarui!' : 'Stok awal berhasil dimasukkan ke saldo inventaris!')
+    toast.success(editingOpeningId.value ? 'Stok awal berhasil diperbarui!' : 'Stok awal berhasil dimasukkan ke stok inventaris!')
     showOpeningModal.value = false
     await Promise.all([load(), master.refresh(true)])
   } catch (e) {
@@ -672,16 +676,16 @@ onActivated(() => {
         </div>
       </div>
       <div class="print-title-block">
-        <h1>LAPORAN SALDO STOK INVENTARIS APD</h1>
+        <h1>LAPORAN STOK INVENTARIS APD</h1>
         <small>Total {{ total }} varian terdaftar</small>
       </div>
     </header>
 
     <section class="page-intro screen-only-intro">
       <div>
-        <p class="eyebrow">Saldo terkini</p>
+        <p class="eyebrow">Stok terkini</p>
         <h2>Stok Inventaris</h2>
-        <p>Kelola saldo stok awal, pantau stok baru, bekas layak, karantina, rusak, pindah kondisi, dan riwayat mutasi lengkap.</p>
+        <p>Kelola stok awal, pantau stok baru, bekas layak, karantina, rusak, pindah kondisi, dan riwayat mutasi lengkap.</p>
       </div>
       <div class="intro-actions">
         <button class="secondary-button" @click="printInventory"><Printer :size="16" /> Cetak PDF</button>
@@ -728,7 +732,7 @@ onActivated(() => {
 
     <section class="panel data-panel">
       <div class="record-tabs">
-        <button :class="{ active: activeInvTab === 'stock' }" @click="activeInvTab = 'stock'">Saldo Stok APD ({{ filteredRows.length }})</button>
+        <button :class="{ active: activeInvTab === 'stock' }" @click="activeInvTab = 'stock'">Stok APD ({{ filteredRows.length }})</button>
         <button :class="{ active: activeInvTab === 'so' }" @click="activeInvTab = 'so'">
           Laporan Selisih SO (+/-) ({{ flatSoItems.length }})
         </button>
@@ -804,7 +808,7 @@ onActivated(() => {
             <tr v-if="!loading && !filteredRows.length">
               <td colspan="9"><div class="empty-state"><PackageOpen :size="32" /><strong>Belum ada stok yang cocok</strong><span>Tambahkan master barang atau input stok awal.</span></div></td>
             </tr>
-            <tr v-if="loading"><td colspan="9"><div class="loading-row">Memuat saldo inventaris...</div></td></tr>
+            <tr v-if="loading"><td colspan="9"><div class="loading-row">Memuat stok inventaris...</div></td></tr>
           </tbody>
         </table>
         </div>
@@ -879,7 +883,7 @@ onActivated(() => {
     <BaseModal
       :open="showOpeningModal"
       :title="editingOpeningId ? 'Edit Catatan Stok Awal' : 'Input Stok Awal (Stok Sebelumnya)'"
-      eyebrow="Saldo Awal Gudang"
+      eyebrow="Stok Awal Gudang"
       subtitle="Masukkan atau revisi stok APD fisik yang sudah tersedia di gudang."
       size="lg"
       @close="showOpeningModal = false"
@@ -921,7 +925,7 @@ onActivated(() => {
             <input v-else v-model="openingForm.officerName" required />
           </label>
         </div>
-        <label class="field"><span>Catatan</span><input v-model="openingForm.notes" placeholder="Contoh: Saldo awal gudang per November 2026" /></label>
+        <label class="field"><span>Catatan</span><input v-model="openingForm.notes" placeholder="Contoh: Stok awal gudang per November 2026" /></label>
 
         <div class="lines-section">
           <div class="lines-header">

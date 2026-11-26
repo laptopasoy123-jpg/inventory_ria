@@ -259,7 +259,7 @@ async function openDashboardHistory(
             doc: { text: op.transaction_no, sub: `Stok Awal · ${op.officer_name}`, strong: true },
             item: { text: v ? variantLabel(v) : 'Barang APD', sub: conditionLabel(it.condition) },
             qty: { text: `+${formatNumber(it.quantity)} ${unit}`, pill: 'plus' },
-            note: op.notes || 'Saldo awal',
+            note: op.notes || 'Stok awal',
           })
         }
       }
@@ -626,7 +626,7 @@ watch(selectedYear, (val) => {
           <button v-for="entry in data.stockByUnit" :key="entry.unit" :class="{ active: selectedUnit === entry.unit }" @click="selectedUnit = entry.unit">
             <span>{{ entry.unit }}</span><strong>{{ formatNumber(entry.quantity) }}</strong><small>Siap pakai (Baru + Layak)</small>
           </button>
-          <div v-if="!data.stockByUnit.length" class="empty-state compact">Belum ada saldo stok.</div>
+          <div v-if="!data.stockByUnit.length" class="empty-state compact">Belum ada stok.</div>
         </div>
         <button type="button" class="purchase-strip clickable-strip" @click="openDashboardHistory('payments')">
           <span><Wallet :size="18" /></span>

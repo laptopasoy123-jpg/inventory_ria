@@ -928,10 +928,38 @@ export class LocalInventoryService implements InventoryService {
     if (status === 'cancelled' && proc.status === 'completed') {
       throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
     }
-    proc.status = status as LocalState['procurements'][number]['status']
-    if (status === 'cancelled' && cancelNote?.trim()) {
-      const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
-      proc.notes = proc.notes ? `${proc.notes} · ${tag}` : tag
+
+    let nextStatus = status
+    if (status !== 'cancelled') {
+      const totalOrdered = proc.items.reduce((s, i) => s + Number(i.ordered_quantity || 0), 0)
+      const totalReceived = proc.items.reduce((s, i) => s + Number(i.received_quantity || 0), 0)
+      if (totalOrdered > 0 && totalReceived >= totalOrdered) {
+        nextStatus = 'completed'
+      } else if (totalReceived > 0) {
+        nextStatus = 'partial'
+      } else {
+        nextStatus = 'ordered'
+      }
+    }
+
+    proc.status = nextStatus as LocalState['procurements'][number]['status']
+    const cleanedPrevNotes = String(proc.notes || '')
+      .replace(/(?:\s*·\s*)?\[(?:Alasan Cancel|Batal Cancel):[^\]]*\]/g, '')
+      .replace(/^\s*·\s*/, '')
+      .trim()
+
+    if (status === 'cancelled') {
+      if (cancelNote?.trim()) {
+        const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
+        proc.notes = cleanedPrevNotes ? `${cleanedPrevNotes} · ${tag}` : tag
+      }
+    } else {
+      if (cancelNote?.trim()) {
+        const tag = `[Batal Cancel: ${cancelNote.trim()}]`
+        proc.notes = cleanedPrevNotes ? `${cleanedPrevNotes} · ${tag}` : tag
+      } else {
+        proc.notes = cleanedPrevNotes || null
+      }
     }
     await this.save(state)
   }

@@ -634,7 +634,7 @@ export class SupabaseInventoryService implements InventoryService {
   async updateProcurementStatus(id: string, status: string, cancelNote?: string) {
     const { data: proc, error: fetchErr } = await this.db
       .from('procurements')
-      .select('status, notes')
+      .select('status, notes, procurement_items(ordered_quantity, received_quantity)')
       .eq('id', id)
       .maybeSingle()
     if (fetchErr) throw this.toErr(fetchErr)
@@ -644,10 +644,38 @@ export class SupabaseInventoryService implements InventoryService {
       throw new Error('Pengadaan yang sudah terpenuhi 100% tidak dapat dibatalkan')
     }
 
-    const updatePayload: Record<string, unknown> = { status }
-    if (status === 'cancelled' && cancelNote?.trim()) {
-      const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
-      updatePayload.notes = proc.notes ? `${proc.notes} · ${tag}` : tag
+    let nextStatus = status
+    if (status !== 'cancelled') {
+      const items = (proc.procurement_items as Array<{ ordered_quantity: number; received_quantity: number }> | null) ?? []
+      const totalOrdered = items.reduce((s, i) => s + Number(i.ordered_quantity || 0), 0)
+      const totalReceived = items.reduce((s, i) => s + Number(i.received_quantity || 0), 0)
+      if (totalOrdered > 0 && totalReceived >= totalOrdered) {
+        nextStatus = 'completed'
+      } else if (totalReceived > 0) {
+        nextStatus = 'partial'
+      } else {
+        nextStatus = 'ordered'
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = { status: nextStatus }
+    const cleanedPrevNotes = String(proc.notes || '')
+      .replace(/(?:\s*·\s*)?\[(?:Alasan Cancel|Batal Cancel):[^\]]*\]/g, '')
+      .replace(/^\s*·\s*/, '')
+      .trim()
+
+    if (status === 'cancelled') {
+      if (cancelNote?.trim()) {
+        const tag = `[Alasan Cancel: ${cancelNote.trim()}]`
+        updatePayload.notes = cleanedPrevNotes ? `${cleanedPrevNotes} · ${tag}` : tag
+      }
+    } else {
+      if (cancelNote?.trim()) {
+        const tag = `[Batal Cancel: ${cancelNote.trim()}]`
+        updatePayload.notes = cleanedPrevNotes ? `${cleanedPrevNotes} · ${tag}` : tag
+      } else {
+        updatePayload.notes = cleanedPrevNotes || null
+      }
     }
 
     const { error } = await this.db.from('procurements').update(updatePayload).eq('id', id)

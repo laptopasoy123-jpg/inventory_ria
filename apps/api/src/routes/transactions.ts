@@ -116,7 +116,7 @@ transactionRoutes.delete('/stocktakes/:id', async (c) => {
 
 transactionRoutes.post('/stocktakes/finalize', zValidator('json', stocktakeFinalizeSchema), async (c) => {
   const data = await c.get('service').finalizeStocktake(c.req.valid('json').stocktakeId)
-  return c.json({ data, message: 'Stok opname berhasil difinalisasi & saldo disesuaikan' })
+  return c.json({ data, message: 'Stok opname berhasil difinalisasi & stok disesuaikan' })
 })
 
 transactionRoutes.post('/reimbursements', zValidator('json', reimbursementSchema), async (c) => {

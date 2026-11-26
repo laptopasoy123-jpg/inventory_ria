@@ -292,7 +292,11 @@ const filteredFunders = computed(() => {
   return master.funders.filter((f) => matchActive(f.active) && (!q || f.name.toLowerCase().includes(q)))
 })
 
-const paginate = <T>(list: T[]) => list.slice((page.value - 1) * 10, page.value * 10)
+const paginate = <T>(list: T[]) => {
+  const maxPage = Math.max(1, Math.ceil(list.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return list.slice((cur - 1) * 10, cur * 10)
+}
 const activeTotalCount = computed(() => {
   const map: Record<MasterTab, number> = {
     items: filteredItems.value.length,

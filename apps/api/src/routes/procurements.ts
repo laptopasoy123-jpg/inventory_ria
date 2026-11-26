@@ -52,7 +52,7 @@ procurementRoutes.patch(
   async (c) => {
     const body = c.req.valid('json')
     await c.get('service').updateProcurementStatus(c.req.param('id'), body.status, body.cancelNote)
-    return c.json({ message: body.status === 'cancelled' ? 'Pengadaan berhasil dibatalkan' : 'Status pengadaan berhasil diubah' })
+    return c.json({ message: body.status === 'cancelled' ? 'Pengadaan berhasil dibatalkan' : 'Pengadaan berhasil diaktifkan kembali' })
   },
 )
 

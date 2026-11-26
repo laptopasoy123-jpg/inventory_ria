@@ -356,7 +356,11 @@ const filteredRows = computed(() => {
   })
 })
 
-const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filteredRows.value.slice((cur - 1) * 10, cur * 10)
+})
 watch([search, filterMode, departmentFilter, contractFilter, apdFilter], () => { page.value = 1 })
 
 const activeSummary = computed(() =>

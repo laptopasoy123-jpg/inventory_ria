@@ -269,8 +269,16 @@ const filteredLostLogs = computed(() => {
   })
 })
 
-const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
-const pagedLostLogs = computed(() => filteredLostLogs.value.slice((lostPage.value - 1) * 10, lostPage.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filteredRows.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filteredRows.value.slice((cur - 1) * 10, cur * 10)
+})
+const pagedLostLogs = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filteredLostLogs.value.length / 10))
+  const cur = Math.min(Math.max(1, lostPage.value), maxPage)
+  return filteredLostLogs.value.slice((cur - 1) * 10, cur * 10)
+})
 watch([activeTab, search, dateFrom, dateTo, officerFilter, varianceFilter, soStatusFilter], () => {
   page.value = 1
   lostPage.value = 1

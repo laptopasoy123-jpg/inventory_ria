@@ -115,7 +115,11 @@ const filtered = computed(() => {
   })
 })
 
-const pagedRows = computed(() => filtered.value.slice((page.value - 1) * 10, page.value * 10))
+const pagedRows = computed(() => {
+  const maxPage = Math.max(1, Math.ceil(filtered.value.length / 10))
+  const cur = Math.min(Math.max(1, page.value), maxPage)
+  return filtered.value.slice((cur - 1) * 10, cur * 10)
+})
 watch([search, filterSource, supplierFilter, receiverFilter, conditionFilter, dateFrom, dateTo], () => { page.value = 1 })
 
 function summarizePurchaseItems(items: PurchaseRow['purchase_items']) {
